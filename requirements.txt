@@ -8,3 +8,5 @@ anthropic>=0.40
 fastapi>=0.110
 uvicorn>=0.29
 slowapi>=0.1.9
+streamlit>=1.37
+google-genai>=2.0

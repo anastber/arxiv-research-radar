@@ -29,6 +29,7 @@ ANSWER_ERRORS = {
     "config": (500, "The demo is misconfigured on the server side. Please try again later."),
     "rate_limit": (503, "The AI provider is busy right now. Please try again in a minute."),
     "unavailable": (503, "The AI provider is temporarily unavailable. Please try again shortly."),
+    "billing": (503, "The demo is temporarily unavailable. Please try again later."),
     "bad_request": (502, "The AI provider couldn't process that question. Try rephrasing it."),
 }
 
