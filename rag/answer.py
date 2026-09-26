@@ -1,14 +1,14 @@
-"""Answer a question from retrieved chunks using Claude, with per-paper citations.
+"""Answer a question from retrieved chunks using the configured LLM, with per-paper citations.
 
-Usage (needs ANTHROPIC_API_KEY):  python -m rag.answer "How can RAG corpora be poisoned?"
+Usage (needs the provider's API key, see .env.example):
+    python -m rag.answer "How can RAG corpora be poisoned?"
 """
-import os
 import re
 import sys
+from typing import Callable
 
-import anthropic
-
-import config
+from rag import llm
+from rag.llm import AnswerError, Completion  # AnswerError re-exported for the API layer
 from rag.retriever import Retriever
 
 SYSTEM_PROMPT = """You answer questions about a small collection of arXiv papers, using ONLY the sources provided in the user message.
@@ -26,26 +26,6 @@ NO_CONTEXT_ANSWER = (
 )
 
 CITATION_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
-
-_client: anthropic.Anthropic | None = None
-
-
-class AnswerError(RuntimeError):
-    """Claude call failed. `kind` lets the API layer pick a status code and message:
-    config | rate_limit | unavailable | bad_request"""
-
-    def __init__(self, message: str, kind: str):
-        super().__init__(message)
-        self.kind = kind
-
-
-def _get_client() -> anthropic.Anthropic:
-    global _client
-    if _client is None:
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            raise AnswerError("ANTHROPIC_API_KEY is not set on the server.", "config")
-        _client = anthropic.Anthropic(timeout=30.0, max_retries=2)
-    return _client
 
 
 def build_sources(chunks: list[dict]) -> list[dict]:
@@ -86,11 +66,18 @@ def extract_citations(answer: str, sources: list[dict]) -> list[dict]:
     ]
 
 
-def answer_question(question: str, retriever: Retriever, client: anthropic.Anthropic | None = None) -> dict:
-    """Returns {answer, cited_papers, usage, truncated}. Raises AnswerError on API failure.
+EMPTY_ANSWER = "No answer could be produced within the length limit. Try a narrower question."
 
-    If retrieval finds nothing above the similarity threshold, Claude is not called
-    at all (zero cost) and a fixed "not covered" answer is returned.
+
+def answer_question(
+    question: str,
+    retriever: Retriever,
+    complete: Callable[[str, str], Completion] = llm.complete,
+) -> dict:
+    """Returns {answer, cited_papers, usage, truncated}. Raises AnswerError on LLM failure.
+
+    If retrieval finds nothing above the similarity threshold, the LLM is not called
+    at all (zero cost/quota) and a fixed "not covered" answer is returned.
     """
     chunks = retriever.search(question)
     if not chunks:
@@ -98,28 +85,13 @@ def answer_question(question: str, retriever: Retriever, client: anthropic.Anthr
                 "usage": {"input_tokens": 0, "output_tokens": 0}, "truncated": False}
 
     sources = build_sources(chunks)
-    try:
-        response = (client or _get_client()).messages.create(
-            model=config.ANSWER_MODEL,
-            max_tokens=config.MAX_ANSWER_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": build_user_message(question, sources)}],
-        )
-    except anthropic.AuthenticationError as e:
-        raise AnswerError("The server's Anthropic API key was rejected.", "config") from e
-    except anthropic.RateLimitError as e:
-        raise AnswerError("The AI provider is rate limiting us right now.", "rate_limit") from e
-    except anthropic.BadRequestError as e:
-        raise AnswerError("The AI provider rejected the request.", "bad_request") from e
-    except (anthropic.APIConnectionError, anthropic.APIStatusError) as e:
-        raise AnswerError("The AI provider is temporarily unavailable.", "unavailable") from e
-
-    answer = "".join(b.text for b in response.content if b.type == "text").strip()
+    result = complete(SYSTEM_PROMPT, build_user_message(question, sources))
+    answer = result.text or EMPTY_ANSWER
     return {
         "answer": answer,
         "cited_papers": extract_citations(answer, sources),
-        "usage": {"input_tokens": response.usage.input_tokens, "output_tokens": response.usage.output_tokens},
-        "truncated": response.stop_reason == "max_tokens",
+        "usage": {"input_tokens": result.input_tokens, "output_tokens": result.output_tokens},
+        "truncated": result.truncated,
     }
 
 
