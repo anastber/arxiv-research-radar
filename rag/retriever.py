@@ -19,13 +19,30 @@ class Retriever:
         self.chunks = json.loads(config.CHUNKS_PATH.read_text())
         self.model = SentenceTransformer(config.EMBED_MODEL)
 
-    def search(self, question: str, k: int = 5, min_score: float = 0.0) -> list[dict]:
-        """Top-k chunks by cosine similarity, each with a `score`. May return [] if
-        nothing clears `min_score` - callers should treat that as "no relevant context"."""
+    def search(
+        self,
+        question: str,
+        k: int = config.TOP_K,
+        min_score: float = config.MIN_SCORE,
+        max_per_paper: int = config.MAX_CHUNKS_PER_PAPER,
+    ) -> list[dict]:
+        """Top-k chunks by cosine similarity (best first), each with a `score`.
+
+        At most `max_per_paper` chunks come from any one paper so answers draw on
+        several papers. Returns [] if nothing clears `min_score` - callers should
+        treat that as "the indexed papers don't cover this"."""
         q = self.model.encode([question], normalize_embeddings=True)
-        scores, ids = self.index.search(q, k)
-        return [
-            {**self.chunks[i], "score": float(s)}
-            for s, i in zip(scores[0], ids[0])
-            if i != -1 and s >= min_score
-        ]
+        # Over-fetch so the per-paper cap still leaves k results.
+        scores, ids = self.index.search(q, min(self.index.ntotal, k * 5))
+        hits, per_paper = [], {}
+        for s, i in zip(scores[0], ids[0]):
+            if i == -1 or s < min_score:
+                break  # results are sorted, so everything after is worse
+            chunk = self.chunks[i]
+            if per_paper.get(chunk["arxiv_id"], 0) >= max_per_paper:
+                continue
+            per_paper[chunk["arxiv_id"]] = per_paper.get(chunk["arxiv_id"], 0) + 1
+            hits.append({**chunk, "score": float(s)})
+            if len(hits) == k:
+                break
+        return hits

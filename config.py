@@ -20,3 +20,12 @@ FAISS_PATH = INDEX_DIR / "faiss.index"
 CHUNKS_PATH = INDEX_DIR / "chunks.json"
 CHUNK_WORDS = 160      # target chunk size; MiniLM truncates input beyond ~256 tokens
 CHUNK_OVERLAP = 1      # sentences repeated between adjacent chunks within a section
+
+# --- Retrieval ---
+TOP_K = int(os.getenv("TOP_K", "6"))                    # chunks sent to Claude
+MAX_CHUNKS_PER_PAPER = 2                                # keeps context spread across papers
+MIN_SCORE = float(os.getenv("MIN_SCORE", "0.3"))        # cosine sim below this = "not covered"
+
+# --- Answer generation (Anthropic API key comes from ANTHROPIC_API_KEY, never from code) ---
+ANSWER_MODEL = os.getenv("ANSWER_MODEL", "claude-haiku-4-5-20251001")
+MAX_ANSWER_TOKENS = int(os.getenv("MAX_ANSWER_TOKENS", "400"))  # hard cap on output cost per query
