@@ -5,3 +5,6 @@ sentence-transformers>=3.0
 faiss-cpu>=1.8
 numpy>=1.26
 anthropic>=0.40
+fastapi>=0.110
+uvicorn>=0.29
+slowapi>=0.1.9
