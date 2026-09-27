@@ -64,7 +64,7 @@ def ask(question: str) -> None:
             f"{config.API_URL}/ask",
             json={"question": question},
             headers=forwarded_headers(),
-            timeout=100,  # the API itself allows up to ~30s per Claude attempt, with retries
+            timeout=100,  # the API itself allows up to ~30s per LLM attempt, with retries
         )
     except requests.Timeout:
         st.error("That took too long. Please try again.")
@@ -83,7 +83,8 @@ def ask(question: str) -> None:
         st.info(f"🌙 {detail or 'Demo limit reached, please try again tomorrow.'}")
     elif resp.status_code == 429:
         wait = body.get("retry_after_seconds")
-        st.warning(f"⏳ {detail or 'Too many questions.'}" + (f" You can ask again in {fmt_wait(wait)}." if wait else ""))
+        wait_text = f" You can ask again in {fmt_wait(wait)}." if wait else ""
+        st.warning(f"⏳ {detail or 'Too many questions.'}" + wait_text)
     else:
         st.error(detail or "Something went wrong. Please try again.")
 

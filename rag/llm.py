@@ -89,7 +89,8 @@ def _complete_gemini(system: str, user: str) -> Completion:
         raise AnswerError("Gemini blocked the request.", "bad_request")
     usage = resp.usage_metadata
     finish = str(candidate.finish_reason or "")
-    text = "".join(p.text or "" for p in (candidate.content.parts or []) if not p.thought) if candidate.content else ""
+    parts = candidate.content.parts or [] if candidate.content else []
+    text = "".join(p.text or "" for p in parts if not p.thought)
     if not text and "STOP" not in finish and "MAX_TOKENS" not in finish:  # SAFETY, RECITATION, ...
         raise AnswerError(f"Gemini returned no text (finish reason {finish}).", "bad_request")
     return Completion(
