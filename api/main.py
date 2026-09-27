@@ -4,8 +4,8 @@ Cost/abuse controls on /ask, in the order they apply:
   1. request validation  (question length is capped)
   2. per-IP rate limit   (slowapi, ASK_RATE_LIMIT, default 5/hour)
   3. global daily cap    (SQLite counter, DAILY_CAP, default 200/day)
-  4. retrieval threshold (nothing relevant -> Claude is never called)
-  5. max_tokens on the Claude call
+  4. retrieval threshold (nothing relevant -> the LLM is never called)
+  5. max output tokens on the LLM call
 """
 import json
 import logging
@@ -81,7 +81,7 @@ def papers(request: Request):
 @app.post("/ask", response_model=AskResponse)
 @limiter.limit(config.ASK_RATE_LIMIT)
 def ask(request: Request, body: AskRequest):
-    # Plain `def` on purpose: embedding + the Claude call block, so FastAPI runs this in a threadpool.
+    # Plain `def` on purpose: embedding + the LLM call block, so FastAPI runs this in a threadpool.
     ip, question = client_ip(request), body.question.strip()
 
     day = usage.reserve_daily_slot(config.DAILY_CAP)
@@ -101,6 +101,7 @@ def ask(request: Request, body: AskRequest):
         status, message = ANSWER_ERRORS[e.kind]
         raise HTTPException(status_code=status, detail=message)
 
-    called_claude = result["usage"]["input_tokens"] > 0
-    usage.log_query(ip, question, "ok" if called_claude else "no_context", result["usage"], len(result["cited_papers"]))
+    called_llm = result["usage"]["input_tokens"] > 0
+    status = "ok" if called_llm else "no_context"
+    usage.log_query(ip, question, status, result["usage"], len(result["cited_papers"]))
     return result

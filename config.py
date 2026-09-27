@@ -22,7 +22,7 @@ CHUNK_WORDS = 160      # target chunk size; MiniLM truncates input beyond ~256 t
 CHUNK_OVERLAP = 1      # sentences repeated between adjacent chunks within a section
 
 # --- Retrieval ---
-TOP_K = int(os.getenv("TOP_K", "6"))                    # chunks sent to Claude
+TOP_K = int(os.getenv("TOP_K", "6"))                    # chunks sent to the LLM
 MAX_CHUNKS_PER_PAPER = 2                                # keeps context spread across papers
 MIN_SCORE = float(os.getenv("MIN_SCORE", "0.3"))        # cosine sim below this = "not covered"
 
