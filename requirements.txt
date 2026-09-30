@@ -8,9 +8,8 @@ sentence-transformers>=3.0
 faiss-cpu>=1.8
 numpy>=1.26
 
-# --- LLM providers (only the one set in LLM_PROVIDER needs a working API key) ---
+# --- LLM (needs GEMINI_API_KEY) ---
 google-genai>=2.0
-anthropic>=0.40
 
 # --- API ---
 fastapi>=0.110

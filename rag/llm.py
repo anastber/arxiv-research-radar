@@ -1,12 +1,11 @@
-"""One `complete()` call over the supported LLM providers (Gemini, Anthropic).
+"""One `complete()` call over the Gemini API.
 
-Each provider function turns the provider's SDK errors into AnswerError with a `kind`,
-so the API layer never needs to know which provider is behind it.
+Turns the SDK's errors into AnswerError with a `kind`, so the API layer never needs to
+know the details of the provider behind it.
 """
 import os
 from dataclasses import dataclass
 
-import anthropic
 import httpx
 from google import genai
 from google.genai import errors as genai_errors
@@ -32,33 +31,26 @@ class Completion:
     truncated: bool  # stopped because of the output-token cap
 
 
-_clients: dict = {}  # lazily created, one per provider (tests can pre-fill this)
+_client: genai.Client | None = None  # lazily created (tests can pre-fill this)
 
-
-def complete(system: str, user: str) -> Completion:
-    if config.LLM_PROVIDER == "gemini":
-        return _complete_gemini(system, user)
-    return _complete_anthropic(system, user)
-
-
-# ---------------------------------------------------------------- Gemini
 
 def _gemini_client() -> genai.Client:
-    if "gemini" not in _clients:
+    global _client
+    if _client is None:
         key = os.getenv("GEMINI_API_KEY")
         if not key:
             raise AnswerError("GEMINI_API_KEY is not set on the server.", "config")
-        _clients["gemini"] = genai.Client(
+        _client = genai.Client(
             api_key=key,
             http_options=genai_types.HttpOptions(
                 timeout=30_000,  # milliseconds
                 retry_options=genai_types.HttpRetryOptions(attempts=2),
             ),
         )
-    return _clients["gemini"]
+    return _client
 
 
-def _complete_gemini(system: str, user: str) -> Completion:
+def complete(system: str, user: str) -> Completion:
     client = _gemini_client()
     thinking = (
         genai_types.ThinkingConfig(thinking_level=config.GEMINI_THINKING_LEVEL)
@@ -99,43 +91,4 @@ def _complete_gemini(system: str, user: str) -> Completion:
         # thinking tokens are billed/quota'd as output, so count them
         output_tokens=((usage.candidates_token_count or 0) + (usage.thoughts_token_count or 0)) if usage else 0,
         truncated="MAX_TOKENS" in finish,
-    )
-
-
-# ---------------------------------------------------------------- Anthropic
-
-def _anthropic_client() -> anthropic.Anthropic:
-    if "anthropic" not in _clients:
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            raise AnswerError("ANTHROPIC_API_KEY is not set on the server.", "config")
-        _clients["anthropic"] = anthropic.Anthropic(timeout=30.0, max_retries=2)
-    return _clients["anthropic"]
-
-
-def _complete_anthropic(system: str, user: str) -> Completion:
-    client = _anthropic_client()
-    try:
-        response = client.messages.create(
-            model=config.ANSWER_MODEL,
-            max_tokens=config.MAX_ANSWER_TOKENS,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-        )
-    except anthropic.AuthenticationError as e:
-        raise AnswerError("The server's Anthropic API key was rejected.", "config") from e
-    except anthropic.RateLimitError as e:
-        raise AnswerError("The AI provider is rate limiting us right now.", "rate_limit") from e
-    except anthropic.BadRequestError as e:
-        # Anthropic reports an empty account balance as a 400; that's our problem, not the user's.
-        if "credit balance" in e.message.lower():
-            raise AnswerError("The Anthropic account is out of credits.", "billing") from e
-        raise AnswerError("The AI provider rejected the request.", "bad_request") from e
-    except (anthropic.APIConnectionError, anthropic.APIStatusError) as e:
-        raise AnswerError("The AI provider is temporarily unavailable.", "unavailable") from e
-
-    return Completion(
-        text="".join(b.text for b in response.content if b.type == "text").strip(),
-        input_tokens=response.usage.input_tokens,
-        output_tokens=response.usage.output_tokens,
-        truncated=response.stop_reason == "max_tokens",
     )

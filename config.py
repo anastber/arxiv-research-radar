@@ -27,18 +27,8 @@ MAX_CHUNKS_PER_PAPER = 2                                # keeps context spread a
 MIN_SCORE = float(os.getenv("MIN_SCORE", "0.3"))        # cosine sim below this = "not covered"
 
 # --- Answer generation ---
-# API keys come from ANTHROPIC_API_KEY / GEMINI_API_KEY in the environment, never from code.
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").lower()   # "gemini" | "anthropic"
-_DEFAULT_MODELS = {"gemini": "gemini-3.5-flash-lite", "anthropic": "claude-haiku-4-5-20251001"}
-if LLM_PROVIDER not in _DEFAULT_MODELS:
-    raise ValueError(f"LLM_PROVIDER must be one of {sorted(_DEFAULT_MODELS)}, got {LLM_PROVIDER!r}")
-ANSWER_MODEL = os.getenv("ANSWER_MODEL", _DEFAULT_MODELS[LLM_PROVIDER])
-_other_family = {"gemini": "claude", "anthropic": "gemini"}[LLM_PROVIDER]
-if ANSWER_MODEL.lower().startswith(_other_family):  # e.g. a stale ANSWER_MODEL left in .env
-    raise ValueError(
-        f"ANSWER_MODEL={ANSWER_MODEL!r} is not a {LLM_PROVIDER} model. Remove ANSWER_MODEL from your "
-        f".env to use the default ({_DEFAULT_MODELS[LLM_PROVIDER]}), or set LLM_PROVIDER to match."
-    )
+# API key comes from GEMINI_API_KEY in the environment, never from code.
+ANSWER_MODEL = os.getenv("ANSWER_MODEL", "gemini-3.5-flash-lite")
 MAX_ANSWER_TOKENS = int(os.getenv("MAX_ANSWER_TOKENS", "400"))  # hard cap on answer length per query
 # Gemini counts "thinking" tokens against its output cap, so it gets extra headroom on top of
 # MAX_ANSWER_TOKENS, and thinking is turned down. Empty GEMINI_THINKING_LEVEL = don't send the setting.
@@ -53,11 +43,10 @@ MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "500"))
 # Used to find the real client IP in X-Forwarded-For without trusting client-supplied entries.
 TRUSTED_PROXY_HOPS = int(os.getenv("TRUSTED_PROXY_HOPS", "0"))
 USAGE_DB_PATH = Path(os.getenv("USAGE_DB_PATH", str(DATA_DIR / "usage.db")))
-# Rough $/million tokens for the cost estimate in `python -m api.usage`. Defaults: Gemini free
-# tier = $0, Haiku 4.5 list price = $1 in / $5 out. Override if you're on a paid Gemini tier.
-_default_prices = ("0", "0") if LLM_PROVIDER == "gemini" else ("1.0", "5.0")
-PRICE_INPUT_PER_MTOK = float(os.getenv("PRICE_INPUT_PER_MTOK", _default_prices[0]))
-PRICE_OUTPUT_PER_MTOK = float(os.getenv("PRICE_OUTPUT_PER_MTOK", _default_prices[1]))
+# Rough $/million tokens for the cost estimate in `python -m api.usage`. Default: Gemini free
+# tier = $0. Override if you're on a paid Gemini tier.
+PRICE_INPUT_PER_MTOK = float(os.getenv("PRICE_INPUT_PER_MTOK", "0"))
+PRICE_OUTPUT_PER_MTOK = float(os.getenv("PRICE_OUTPUT_PER_MTOK", "0"))
 
 # --- Frontend ---
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
