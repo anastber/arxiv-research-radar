@@ -30,16 +30,6 @@ def load_papers() -> list[dict]:
     return resp.json()
 
 
-def forwarded_headers() -> dict:
-    """Relay the visitor's X-Forwarded-For to the API. Without this the API only sees
-    this Streamlit server's address, so every visitor would share one rate-limit bucket."""
-    try:
-        xff = st.context.headers.get("X-Forwarded-For")
-    except Exception:  # headers unavailable (e.g. some test/runtime contexts)
-        xff = None
-    return {"X-Forwarded-For": xff} if xff else {}
-
-
 def error_body(resp: requests.Response) -> dict:
     try:
         body = resp.json()
@@ -63,7 +53,6 @@ def ask(question: str) -> None:
         resp = requests.post(
             f"{config.API_URL}/ask",
             json={"question": question},
-            headers=forwarded_headers(),
             timeout=100,  # the API itself allows up to ~30s per LLM attempt, with retries
         )
     except requests.Timeout:

@@ -39,9 +39,6 @@ GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "low")
 ASK_RATE_LIMIT = os.getenv("ASK_RATE_LIMIT", "5/hour")            # per IP, slowapi syntax
 DAILY_CAP = int(os.getenv("DAILY_CAP", "200"))                    # total /ask calls per UTC day
 MAX_QUESTION_CHARS = int(os.getenv("MAX_QUESTION_CHARS", "500"))
-# How many reverse proxies sit in front of the app (Render/Fly/HF Spaces = 1, local = 0).
-# Used to find the real client IP in X-Forwarded-For without trusting client-supplied entries.
-TRUSTED_PROXY_HOPS = int(os.getenv("TRUSTED_PROXY_HOPS", "0"))
 USAGE_DB_PATH = Path(os.getenv("USAGE_DB_PATH", str(DATA_DIR / "usage.db")))
 # Rough $/million tokens for the cost estimate in `python -m api.usage`. Default: Gemini free
 # tier = $0. Override if you're on a paid Gemini tier.

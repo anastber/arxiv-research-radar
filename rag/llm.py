@@ -16,7 +16,7 @@ import config
 
 class AnswerError(RuntimeError):
     """LLM call failed. `kind` lets the API layer pick a status code and message:
-    config | billing | rate_limit | unavailable | bad_request"""
+    config | rate_limit | unavailable | bad_request"""
 
     def __init__(self, message: str, kind: str):
         super().__init__(message)
@@ -31,7 +31,7 @@ class Completion:
     truncated: bool  # stopped because of the output-token cap
 
 
-_client: genai.Client | None = None  # lazily created (tests can pre-fill this)
+_client: genai.Client | None = None
 
 
 def _gemini_client() -> genai.Client:

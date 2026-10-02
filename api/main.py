@@ -15,11 +15,13 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 import config
 from api import usage
-from api.ratelimit import client_ip, limiter, rate_limit_handler
-from rag.answer import AnswerError, answer_question
+from api.ratelimit import limiter, rate_limit_handler
+from rag.answer import answer_question
+from rag.llm import AnswerError
 from rag.retriever import Retriever
 
 logger = logging.getLogger("api")
@@ -29,7 +31,6 @@ ANSWER_ERRORS = {
     "config": (500, "The demo is misconfigured on the server side. Please try again later."),
     "rate_limit": (503, "The AI provider is busy right now. Please try again in a minute."),
     "unavailable": (503, "The AI provider is temporarily unavailable. Please try again shortly."),
-    "billing": (503, "The demo is temporarily unavailable. Please try again later."),
     "bad_request": (502, "The AI provider couldn't process that question. Try rephrasing it."),
 }
 
@@ -82,7 +83,7 @@ def papers(request: Request):
 @limiter.limit(config.ASK_RATE_LIMIT)
 def ask(request: Request, body: AskRequest):
     # Plain `def` on purpose: embedding + the LLM call block, so FastAPI runs this in a threadpool.
-    ip, question = client_ip(request), body.question.strip()
+    ip, question = get_remote_address(request), body.question.strip()
 
     day = usage.reserve_daily_slot(config.DAILY_CAP)
     if day is None:

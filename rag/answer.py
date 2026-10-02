@@ -1,14 +1,13 @@
-"""Answer a question from retrieved chunks using the configured LLM, with per-paper citations.
+"""Answer a question from retrieved chunks using Gemini, with per-paper citations.
 
-Usage (needs the provider's API key, see .env.example):
+Usage (needs GEMINI_API_KEY, see .env.example):
     python -m rag.answer "How can RAG corpora be poisoned?"
 """
 import re
 import sys
-from typing import Callable
 
 from rag import llm
-from rag.llm import AnswerError, Completion  # AnswerError re-exported for the API layer
+from rag.llm import AnswerError
 from rag.retriever import Retriever
 
 SYSTEM_PROMPT = """You answer questions about a small collection of arXiv papers, \
@@ -71,11 +70,7 @@ def extract_citations(answer: str, sources: list[dict]) -> list[dict]:
 EMPTY_ANSWER = "No answer could be produced within the length limit. Try a narrower question."
 
 
-def answer_question(
-    question: str,
-    retriever: Retriever,
-    complete: Callable[[str, str], Completion] = llm.complete,
-) -> dict:
+def answer_question(question: str, retriever: Retriever) -> dict:
     """Returns {answer, cited_papers, usage, truncated}. Raises AnswerError on LLM failure.
 
     If retrieval finds nothing above the similarity threshold, the LLM is not called
@@ -87,7 +82,7 @@ def answer_question(
                 "usage": {"input_tokens": 0, "output_tokens": 0}, "truncated": False}
 
     sources = build_sources(chunks)
-    result = complete(SYSTEM_PROMPT, build_user_message(question, sources))
+    result = llm.complete(SYSTEM_PROMPT, build_user_message(question, sources))
     answer = result.text or EMPTY_ANSWER
     return {
         "answer": answer,
