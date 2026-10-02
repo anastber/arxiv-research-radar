@@ -8,9 +8,61 @@ answer with `[1][2]`-style citations linking to the actual papers — never a ha
 answer, because the LLM only ever sees retrieved chunks and is told to say so when
 nothing relevant was found.
 
-This README focuses on **how the system is put together**. For environment variables see
-[`.env.example`](.env.example); for running commands see the module docstrings referenced
-below.
+The first half of this README is about running it; the rest explains **how the system is
+put together**.
+
+![A cited answer drawing on two papers](docs/screenshots/answer.png)
+
+| Off-topic question: the LLM is never called | Per-IP rate limit reached |
+|---|---|
+| ![Not-covered response](docs/screenshots/not-covered.png) | ![Rate limit message](docs/screenshots/rate-limit.png) |
+
+---
+
+## Quickstart
+
+Requires Python 3.12+ and a free [Gemini API key](https://aistudio.google.com/apikey).
+The repo already contains a built index (`data/index/`), so there's no ingestion step.
+
+```bash
+git clone https://github.com/anastber/arxiv-research-radar.git
+cd arxiv-research-radar
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env        # then set GEMINI_API_KEY in .env
+```
+
+Run the backend and the UI in two terminals (both with the venv activated):
+
+```bash
+uvicorn api.main:app --port 8000     # terminal 1, wait for "Application startup complete"
+streamlit run app.py                 # terminal 2, opens http://localhost:8501
+```
+
+The first start downloads the embedding model (~90 MB) from Hugging Face, so it takes a
+little longer. `curl http://localhost:8000/health` should return `{"status":"ok","papers":20}`.
+
+### Rebuilding the index (optional)
+
+To pull the latest papers, or index a different topic after changing `ARXIV_QUERY` in
+`.env`:
+
+```bash
+python -m ingest.fetch      # arXiv -> data/papers.json
+python -m rag.index         # papers -> data/index/
+```
+
+Restart uvicorn afterwards: the index is loaded once at startup.
+
+### Other entry points
+
+```bash
+python -m rag.answer "what is stale-document poisoning?"   # ask from the CLI, no API/UI
+python -m api.usage                                        # query log, daily counts, token usage
+```
 
 ---
 
@@ -253,3 +305,18 @@ All tunables are environment variables, centralized in `config.py` and documente
 inline comments there and in [`.env.example`](.env.example) — covering the arXiv query,
 chunking/embedding, retrieval (`TOP_K`, `MIN_SCORE`), the Gemini model, and the abuse
 controls (`ASK_RATE_LIMIT`, `DAILY_CAP`, `TRUSTED_PROXY_HOPS`).
+
+`.env` is read once when a process starts, so restart uvicorn after editing it
+(`--reload` only watches Python files).
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| UI says "Couldn't load the paper list (backend unreachable)" | The API isn't running, or crashed on startup. Check the uvicorn terminal for a traceback; it only serves requests after "Application startup complete". |
+| `ModuleNotFoundError: No module named 'google'` (or any package) | `pip` installed into a different Python than the one running uvicorn, typically Anaconda's `base` env alongside the venv. Run `conda deactivate`, activate `.venv`, check `which python` points into `.venv`, then reinstall. |
+| `ImportError: cannot import name 'genai' from 'google'` | The older `google-generativeai` package is installed instead of `google-genai`. `pip uninstall google-generativeai && pip install -r requirements.txt`. |
+| "The demo is misconfigured on the server side" | `GEMINI_API_KEY` is missing; the uvicorn log says so. Set it in `.env` and restart uvicorn. |
+| "The AI provider is busy right now" | Gemini free-tier rate limit. Wait a minute, or check your quota at [aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit). |
+| "You've reached the limit of 5 questions per hour" after a few local tries | The per-IP limit (`ASK_RATE_LIMIT`, default `5/hour`). Raise it in `.env` for local use, or restart uvicorn to reset the in-memory counters. |
+| `IndexNotBuiltError` on startup | `data/index/` is missing. Run `python -m rag.index`. |
