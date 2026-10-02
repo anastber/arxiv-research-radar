@@ -8,7 +8,7 @@ answer with `[1][2]`-style citations linking to the actual papers — never a ha
 answer, because the LLM only ever sees retrieved chunks and is told to say so when
 nothing relevant was found.
 
-The first half of this README is about running it; the rest explains **how the system is
+The first half of this README is about running it locally; the rest explains **how the system is
 put together**.
 
 ![A cited answer drawing on two papers](docs/screenshots/answer.png)
@@ -83,9 +83,9 @@ flowchart LR
         Index --> Store[("data/index/faiss.index<br/>data/index/chunks.json")]
     end
 
-    subgraph Online["Online pipeline — always running"]
+    subgraph Online["Online pipeline — local API + UI"]
         direction TB
-        Browser["Visitor's browser"] --> UI["Streamlit UI<br/>app.py"]
+        Browser["Browser"] --> UI["Streamlit UI<br/>app.py"]
         UI -->|"GET /papers<br/>POST /ask"| API["FastAPI<br/>api/main.py"]
         API --> Guard["api.ratelimit + api.usage<br/>per-IP limit · daily cap · SQLite log"]
         API --> Retriever["rag.retriever.Retriever<br/>FAISS top-k search"]
@@ -188,13 +188,11 @@ sequenceDiagram
 
 ### Request-time cost/abuse controls, in the order they apply
 
-This is the part of the system most worth understanding, since it's what makes a public
-demo safe to run on a free LLM tier:
+These keep LLM usage predictable on Gemini's free tier:
 
 1. **Request validation** — `AskRequest.question` is capped at `MAX_QUESTION_CHARS`
    (Pydantic `Field`).
-2. **Per-IP rate limit** — `slowapi`, in-memory, keyed by the real client IP (see
-   `client_ip()` below). Default `5/hour`.
+2. **Per-IP rate limit** — `slowapi`, in-memory. Default `5/hour`.
 3. **Global daily cap** — `api/usage.py`'s `reserve_daily_slot()` does an atomic
    `UPDATE daily_counts SET count = count + 1 WHERE day = ? AND count < ?` in SQLite, so
    it's race-free under concurrent requests without needing a lock. If the LLM call then
@@ -206,12 +204,6 @@ demo safe to run on a free LLM tier:
    off-topic questions never reach the paid/rate-limited API.
 5. **Output token cap** — `MAX_ANSWER_TOKENS` bounds the LLM call itself, so even an
    answered question has a predictable worst-case cost.
-
-`client_ip()` (`api/ratelimit.py`) deserves a callout: behind `TRUSTED_PROXY_HOPS`
-reverse proxies, the raw socket peer is the proxy, not the visitor, so every visitor
-would share one rate-limit bucket. It instead reads the Nth-from-the-right entry of
-`X-Forwarded-For` — the rightmost entries are the ones *your own* proxies appended, so a
-client can't spoof its way to a fresh bucket by prepending fake entries.
 
 ### LLM error handling
 
@@ -288,7 +280,7 @@ arxiv-research-radar/
 │   └── answer.py                 # Retrieval + prompt construction + citation extraction (entry point)
 ├── api/
 │   ├── main.py                 # FastAPI app: /health, /papers, /ask
-│   ├── ratelimit.py             # Per-IP rate limiting (slowapi) + proxy-aware client IP
+│   ├── ratelimit.py             # Per-IP rate limiting (slowapi)
 │   └── usage.py                  # SQLite daily cap + query log (entry point: `python -m api.usage`)
 └── .github/workflows/
     └── weekly-refresh.yml      # Scheduled offline pipeline run (no secrets needed)
@@ -304,7 +296,7 @@ isolation.
 All tunables are environment variables, centralized in `config.py` and documented with
 inline comments there and in [`.env.example`](.env.example) — covering the arXiv query,
 chunking/embedding, retrieval (`TOP_K`, `MIN_SCORE`), the Gemini model, and the abuse
-controls (`ASK_RATE_LIMIT`, `DAILY_CAP`, `TRUSTED_PROXY_HOPS`).
+controls (`ASK_RATE_LIMIT`, `DAILY_CAP`).
 
 `.env` is read once when a process starts, so restart uvicorn after editing it
 (`--reload` only watches Python files).
