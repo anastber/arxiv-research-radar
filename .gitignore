@@ -9,3 +9,7 @@ data/usage.db
 data/queries.log
 
 # data/papers.json and data/index/ ARE committed: the weekly GitHub Action refreshes them
+
+# tooling caches
+.pytest_cache/
+.ruff_cache/

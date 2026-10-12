@@ -9,7 +9,7 @@ Monitor with:  python -m api.usage
 import hashlib
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import config
 
@@ -36,7 +36,7 @@ def _connect() -> sqlite3.Connection:
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
 def hash_ip(ip: str) -> str:
@@ -67,7 +67,7 @@ def log_query(ip: str, question: str, status: str, usage: dict | None = None, ci
         conn.execute(
             "INSERT INTO queries (ts, ip_hash, question, status, input_tokens, output_tokens, cited_papers)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (datetime.now(timezone.utc).isoformat(timespec="seconds"), hash_ip(ip), question, status,
+            (datetime.now(UTC).isoformat(timespec="seconds"), hash_ip(ip), question, status,
              usage.get("input_tokens", 0), usage.get("output_tokens", 0), cited),
         )
 
