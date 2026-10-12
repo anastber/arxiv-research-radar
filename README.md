@@ -1,5 +1,7 @@
 # arxiv-research-radar
 
+[![CI](https://github.com/anastber/arxiv-research-radar/actions/workflows/ci.yml/badge.svg)](https://github.com/anastber/arxiv-research-radar/actions/workflows/ci.yml)
+
 A small RAG (retrieval-augmented generation) app that answers questions about a rolling
 collection of recent arXiv papers, with per-answer citations back to the source papers.
 
@@ -282,7 +284,10 @@ arxiv-research-radar/
 │   ├── main.py                 # FastAPI app: /health, /papers, /ask
 │   ├── ratelimit.py             # Per-IP rate limiting (slowapi)
 │   └── usage.py                  # SQLite daily cap + query log (entry point: `python -m api.usage`)
+├── tests/                  # pytest suite (fake embeddings + fake LLM: no model download, no API key)
+├── pyproject.toml          # ruff + pytest configuration
 └── .github/workflows/
+    ├── ci.yml                  # Lint + tests on every push to main and every pull request
     └── weekly-refresh.yml      # Scheduled offline pipeline run (no secrets needed)
 ```
 
@@ -300,6 +305,17 @@ controls (`ASK_RATE_LIMIT`, `DAILY_CAP`).
 
 `.env` is read once when a process starts, so restart uvicorn after editing it
 (`--reload` only watches Python files).
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+pytest            # unit + API tests, a few seconds, no network or API key needed
+ruff check .      # lint
+```
+
+Work happens on feature branches merged into `main` through pull requests; CI
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint and tests on each one.
 
 ## Troubleshooting
 

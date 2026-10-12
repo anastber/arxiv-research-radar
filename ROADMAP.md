@@ -10,7 +10,7 @@ demo to a research assistant that stays accurate over a corpus of several thousa
 - Section-aware chunking over `pypdf`-extracted text
 - Grounded answers with per-paper citations, retrieval threshold for off-topic questions
 - Index and corpus versioned in the repository
-- No automated tests or quality measurement yet
+- No quality measurement yet
 
 ## Approach
 
@@ -25,10 +25,11 @@ demo to a research assistant that stays accurate over a corpus of several thousa
 
 ## Milestone 1 — Testing and CI
 
-- [ ] Unit tests for chunking (heading detection, bibliography removal, section merging),
+- [x] Unit tests for chunking (heading detection, bibliography removal, section merging),
       citation extraction, source building, and retrieval against a fixture index
-- [ ] Linting with `ruff`
-- [ ] CI workflow running lint and tests on every push
+- [x] API tests: validation, error mapping, daily cap, per-IP rate limit
+- [x] Linting with `ruff`
+- [x] CI workflow running lint and tests on every push to `main` and every pull request
 
 ## Milestone 2 — Evaluation framework
 

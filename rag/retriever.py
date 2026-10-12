@@ -35,7 +35,7 @@ class Retriever:
         # Over-fetch so the per-paper cap still leaves k results.
         scores, ids = self.index.search(q, min(self.index.ntotal, k * 5))
         hits, per_paper = [], {}
-        for s, i in zip(scores[0], ids[0]):
+        for s, i in zip(scores[0], ids[0], strict=True):
             if i == -1 or s < min_score:
                 break  # results are sorted, so everything after is worse
             chunk = self.chunks[i]

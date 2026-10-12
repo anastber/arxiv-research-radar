@@ -1,0 +1,13 @@
+# Tool configuration only: the app is run from source, not installed as a package.
+
+[tool.ruff]
+target-version = "py312"
+# Long docstrings, prompt text and error messages read better unwrapped.
+line-length = 115
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

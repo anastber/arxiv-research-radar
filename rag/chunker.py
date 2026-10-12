@@ -85,6 +85,8 @@ def _pack_sentences(text: str) -> list[str]:
             chunks.append(" ".join(current))
             current = current[-config.CHUNK_OVERLAP:] if config.CHUNK_OVERLAP else []
             words = sum(len(s.split()) for s in current)
+            if words + n > config.CHUNK_WORDS:  # overlap too long to leave room (e.g. hard-split table runs)
+                current, words = [], 0
         current.append(sent)
         words += n
     if current:

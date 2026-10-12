@@ -100,7 +100,7 @@ def ask(request: Request, body: AskRequest):
         usage.log_query(ip, question, f"error:{e.kind}")
         logger.error("answer failed (%s): %s", e.kind, e, exc_info=e.__cause__)
         status, message = ANSWER_ERRORS[e.kind]
-        raise HTTPException(status_code=status, detail=message)
+        raise HTTPException(status_code=status, detail=message) from e
 
     called_llm = result["usage"]["input_tokens"] > 0
     status = "ok" if called_llm else "no_context"
