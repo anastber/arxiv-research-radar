@@ -2,7 +2,6 @@ import faiss
 import numpy as np
 import pytest
 
-import config
 from rag.retriever import IndexNotBuiltError, Retriever
 
 # Unit vectors at decreasing angles from the query direction [1, 0], so the cosine
@@ -52,7 +51,6 @@ def test_k_limits_the_number_of_results(retriever):
     assert len(retriever.search("q", k=2, min_score=0.0, max_per_paper=6)) == 2
 
 
-def test_missing_index_raises(monkeypatch, tmp_path):
-    monkeypatch.setattr(config, "FAISS_PATH", tmp_path / "faiss.index")
+def test_missing_index_raises(tmp_path):
     with pytest.raises(IndexNotBuiltError):
-        Retriever()
+        Retriever(tmp_path)

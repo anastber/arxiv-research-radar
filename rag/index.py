@@ -6,6 +6,7 @@ metadata). Row i of the index corresponds to chunks[i].
 """
 import json
 import sys
+from pathlib import Path
 
 import faiss
 from sentence_transformers import SentenceTransformer
@@ -19,15 +20,9 @@ def embedding_text(chunk: dict) -> str:
     return f"{chunk['title']} | {chunk['section']}\n{chunk['text']}"
 
 
-def main() -> int:
-    if not config.PAPERS_PATH.exists():
-        print("ERROR: data/papers.json not found. Run `python -m ingest.fetch` first.", file=sys.stderr)
-        return 1
-    papers = json.loads(config.PAPERS_PATH.read_text())
+def build_index(papers: list[dict], out_dir: Path) -> None:
+    """Chunk and embed `papers`, then write the FAISS index + chunk metadata to `out_dir`."""
     chunks = [c for p in papers for c in chunk_paper(p)]
-    if not chunks:
-        print("ERROR: no chunks produced.", file=sys.stderr)
-        return 1
     print(f"{len(papers)} papers -> {len(chunks)} chunks. Embedding with {config.EMBED_MODEL} ...")
 
     model = SentenceTransformer(config.EMBED_MODEL)
@@ -41,10 +36,17 @@ def main() -> int:
     index = faiss.IndexFlatIP(vectors.shape[1])  # exact search; a few thousand vectors needs no ANN
     index.add(vectors)
 
-    config.INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    faiss.write_index(index, str(config.FAISS_PATH))
-    config.CHUNKS_PATH.write_text(json.dumps(chunks, ensure_ascii=False))
-    print(f"Saved {index.ntotal} vectors (dim {vectors.shape[1]}) -> {config.INDEX_DIR}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    faiss.write_index(index, str(out_dir / config.FAISS_FILE))
+    (out_dir / config.CHUNKS_FILE).write_text(json.dumps(chunks, ensure_ascii=False))
+    print(f"Saved {index.ntotal} vectors (dim {vectors.shape[1]}) -> {out_dir}")
+
+
+def main() -> int:
+    if not config.PAPERS_PATH.exists():
+        print("ERROR: data/papers.json not found. Run `python -m ingest.fetch` first.", file=sys.stderr)
+        return 1
+    build_index(json.loads(config.PAPERS_PATH.read_text()), config.INDEX_DIR)
     return 0
 
 
