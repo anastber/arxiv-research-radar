@@ -26,5 +26,7 @@ def extract_text(pdf_url: str) -> str | None:
         print(f"  ! PDF failed ({pdf_url}): {type(e).__name__}: {e}")
         return None
 
-    text = "\n".join(pages).replace("\x00", "").strip()
+    text = "\n".join(pages).replace("\x00", "")
+    # pypdf can emit lone surrogates from broken font maps; they can't be encoded as UTF-8.
+    text = text.encode("utf-8", "ignore").decode("utf-8").strip()
     return text or None
