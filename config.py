@@ -16,8 +16,8 @@ ARXIV_MAX_PAPERS = int(os.getenv("ARXIV_MAX_PAPERS", "20"))
 # --- Chunking / embedding / index ---
 EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 INDEX_DIR = DATA_DIR / "index"
-FAISS_PATH = INDEX_DIR / "faiss.index"
-CHUNKS_PATH = INDEX_DIR / "chunks.json"
+FAISS_FILE = "faiss.index"    # inside an index directory, row-aligned with...
+CHUNKS_FILE = "chunks.json"   # ...the chunk text + metadata
 CHUNK_WORDS = 160      # target chunk size; MiniLM truncates input beyond ~256 tokens
 CHUNK_OVERLAP = 1      # sentences repeated between adjacent chunks within a section
 
@@ -44,6 +44,11 @@ USAGE_DB_PATH = Path(os.getenv("USAGE_DB_PATH", str(DATA_DIR / "usage.db")))
 # tier = $0. Override if you're on a paid Gemini tier.
 PRICE_INPUT_PER_MTOK = float(os.getenv("PRICE_INPUT_PER_MTOK", "0"))
 PRICE_OUTPUT_PER_MTOK = float(os.getenv("PRICE_OUTPUT_PER_MTOK", "0"))
+
+# --- Evaluation (frozen benchmark, independent of the live corpus) ---
+EVAL_DIR = DATA_DIR / "eval"
+EVAL_CORPUS_PATH = EVAL_DIR / "corpus.json.gz"   # committed
+EVAL_INDEX_DIR = EVAL_DIR / "index"              # built locally from the corpus, not committed
 
 # --- Frontend ---
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")

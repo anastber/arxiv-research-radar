@@ -252,6 +252,9 @@ data/
 ├── index/
 │   ├── faiss.index      # rag.index output: FAISS IndexFlatIP, one vector per chunk
 │   └── chunks.json      # rag.index output: chunk text + metadata, row-aligned with faiss.index
+├── eval/
+│   ├── corpus.json.gz   # frozen benchmark corpus (see Evaluation below)
+│   └── index/           # benchmark index, built locally by `python -m eval.corpus index` (not committed)
 └── usage.db             # api.usage: SQLite — daily_counts + queries tables (created at API startup)
 ```
 
@@ -284,6 +287,8 @@ arxiv-research-radar/
 │   ├── main.py                 # FastAPI app: /health, /papers, /ask
 │   ├── ratelimit.py             # Per-IP rate limiting (slowapi)
 │   └── usage.py                  # SQLite daily cap + query log (entry point: `python -m api.usage`)
+├── eval/
+│   └── corpus.py               # Frozen benchmark corpus: fetch from arXiv, build its index (entry point)
 ├── tests/                  # pytest suite (fake embeddings + fake LLM: no model download, no API key)
 ├── pyproject.toml          # ruff + pytest configuration
 └── .github/workflows/
@@ -295,6 +300,21 @@ Each entry point is independently runnable and documented in its own module docs
 (`python -m ingest.fetch`, `python -m rag.index`, `python -m rag.answer "..."`,
 `python -m api.usage`), which is the fastest way to exercise one stage of the pipeline in
 isolation.
+
+## Evaluation
+
+Retrieval and answer quality are measured against a **frozen benchmark corpus**, kept
+separate from the live corpus so results stay comparable over time: the live corpus is
+"the 20 most recent papers" and changes every week.
+
+The benchmark is every paper matching the default query submitted between 2026-08-01 and
+2026-09-30, stored with its parsed text in `data/eval/corpus.json.gz`. A closed date window
+means the paper list can always be re-derived from arXiv.
+
+```bash
+python -m eval.corpus index   # build data/eval/index/ from the committed corpus (~5 min on CPU)
+python -m eval.corpus fetch   # maintainers only: re-download the corpus from arXiv (~30 min)
+```
 
 ## Configuration
 

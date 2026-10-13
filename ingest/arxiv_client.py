@@ -42,15 +42,16 @@ def _parse_entry(entry: ET.Element) -> dict:
     }
 
 
-def fetch_recent(query: str, max_results: int = 20, retries: int = 3) -> list[dict]:
-    """Return the `max_results` most recently submitted papers matching `query`.
+def fetch_recent(query: str, max_results: int = 20, start: int = 0, retries: int = 3) -> list[dict]:
+    """Return the `max_results` most recently submitted papers matching `query`,
+    skipping the first `start` (for paging through large result sets).
 
     Raises ArxivError if the API keeps failing, so callers never mistake an
     outage for "no papers found".
     """
     params = {
         "search_query": query,
-        "start": 0,
+        "start": start,
         "max_results": max_results,
         "sortBy": "submittedDate",
         "sortOrder": "descending",

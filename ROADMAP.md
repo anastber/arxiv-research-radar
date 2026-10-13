@@ -36,7 +36,7 @@ demo to a research assistant that stays accurate over a corpus of several thousa
 Because the live corpus changes weekly, evaluation runs against a **frozen snapshot**
 (corpus + index) so results stay comparable over time.
 
-- [ ] Frozen benchmark corpus of 300–500 papers
+- [x] Frozen benchmark corpus of 300–500 papers (437 papers, 2026-08-01 → 2026-09-30)
 - [ ] Golden question set (~100 questions), generated from source chunks and manually
       reviewed, including off-topic questions and multi-paper questions
 - [ ] Retrieval metrics: Recall@k, MRR, nDCG, off-topic rejection accuracy

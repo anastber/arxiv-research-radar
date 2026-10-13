@@ -1,5 +1,6 @@
 """Load the FAISS index and retrieve the top-k chunks for a question."""
 import json
+from pathlib import Path
 
 import faiss
 from sentence_transformers import SentenceTransformer
@@ -12,11 +13,12 @@ class IndexNotBuiltError(RuntimeError):
 
 
 class Retriever:
-    def __init__(self):
-        if not (config.FAISS_PATH.exists() and config.CHUNKS_PATH.exists()):
-            raise IndexNotBuiltError("Index not found. Run `python -m rag.index` first.")
-        self.index = faiss.read_index(str(config.FAISS_PATH))
-        self.chunks = json.loads(config.CHUNKS_PATH.read_text())
+    def __init__(self, index_dir: Path = config.INDEX_DIR):
+        faiss_path, chunks_path = index_dir / config.FAISS_FILE, index_dir / config.CHUNKS_FILE
+        if not (faiss_path.exists() and chunks_path.exists()):
+            raise IndexNotBuiltError(f"Index not found in {index_dir}. Build it first (see README).")
+        self.index = faiss.read_index(str(faiss_path))
+        self.chunks = json.loads(chunks_path.read_text())
         self.model = SentenceTransformer(config.EMBED_MODEL)
 
     def search(
