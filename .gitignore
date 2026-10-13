@@ -10,6 +10,9 @@ data/queries.log
 
 # data/papers.json and data/index/ ARE committed: the weekly GitHub Action refreshes them
 
+# benchmark index: rebuilt locally from data/eval/corpus.json.gz (which is committed)
+data/eval/index/
+
 # tooling caches
 .pytest_cache/
 .ruff_cache/
