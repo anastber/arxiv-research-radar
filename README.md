@@ -254,6 +254,7 @@ data/
 │   └── chunks.json      # rag.index output: chunk text + metadata, row-aligned with faiss.index
 ├── eval/
 │   ├── corpus.json.gz   # frozen benchmark corpus (see Evaluation below)
+│   ├── questions.jsonl  # golden question set: LLM-drafted, reviewed by hand
 │   └── index/           # benchmark index, built locally by `python -m eval.corpus index` (not committed)
 └── usage.db             # api.usage: SQLite — daily_counts + queries tables (created at API startup)
 ```
@@ -288,7 +289,8 @@ arxiv-research-radar/
 │   ├── ratelimit.py             # Per-IP rate limiting (slowapi)
 │   └── usage.py                  # SQLite daily cap + query log (entry point: `python -m api.usage`)
 ├── eval/
-│   └── corpus.py               # Frozen benchmark corpus: fetch from arXiv, build its index (entry point)
+│   ├── corpus.py               # Frozen benchmark corpus: fetch from arXiv, build its index (entry point)
+│   └── questions.py            # Golden question set: draft with Gemini, review interactively (entry point)
 ├── tests/                  # pytest suite (fake embeddings + fake LLM: no model download, no API key)
 ├── pyproject.toml          # ruff + pytest configuration
 └── .github/workflows/
@@ -315,6 +317,28 @@ means the paper list can always be re-derived from arXiv.
 python -m eval.corpus index   # build data/eval/index/ from the committed corpus (~5 min on CPU)
 python -m eval.corpus fetch   # maintainers only: re-download the corpus from arXiv (~30 min)
 ```
+
+The **golden question set** (`data/eval/questions.jsonl`) is drafted by Gemini from passages
+of the benchmark corpus, then reviewed by hand. It holds three kinds of questions:
+
+| Kind | Drafted from | Expected behavior |
+|---|---|---|
+| `single` | one passage of one paper | retrieve that paper |
+| `multi` | two related passages from different papers (cosine 0.55–0.9) | retrieve both papers |
+| `off_topic` | nothing in the corpus | decline to answer |
+
+Ground truth is the list of relevant papers (`arxiv_ids`) rather than chunk ids, so the
+question set stays valid when parsing or chunking changes. The source passages are kept as
+`evidence`, along with a reference answer. Questions never name the system a paper
+introduces, so that retrieval cannot succeed on a single keyword match.
+
+```bash
+python -m eval.questions generate   # draft questions (needs GEMINI_API_KEY and the benchmark index)
+python -m eval.questions review     # accept, edit or reject each pending question
+```
+
+Only `accepted` questions are used for evaluation. `generate` is resumable, and rerunning
+it after a review replaces rejected questions with new drafts from unused passages.
 
 ## Configuration
 

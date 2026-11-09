@@ -37,8 +37,9 @@ Because the live corpus changes weekly, evaluation runs against a **frozen snaps
 (corpus + index) so results stay comparable over time.
 
 - [x] Frozen benchmark corpus of 300–500 papers (437 papers, 2026-08-01 → 2026-09-30)
-- [ ] Golden question set (~100 questions), generated from source chunks and manually
-      reviewed, including off-topic questions and multi-paper questions
+- [x] Golden question set (~100 questions), generated from source chunks and manually
+      reviewed, including off-topic questions and multi-paper questions (122 questions:
+      90 single-paper, 20 multi-paper, 12 off-topic; 37 hand-reviewed so far)
 - [ ] Retrieval metrics: Recall@k, MRR, nDCG, off-topic rejection accuracy
 - [ ] Answer metrics: faithfulness, citation precision, answer relevance (LLM-judged,
       calibrated against a hand-graded sample)
