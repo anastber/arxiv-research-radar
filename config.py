@@ -49,6 +49,7 @@ PRICE_OUTPUT_PER_MTOK = float(os.getenv("PRICE_OUTPUT_PER_MTOK", "0"))
 EVAL_DIR = DATA_DIR / "eval"
 EVAL_CORPUS_PATH = EVAL_DIR / "corpus.json.gz"   # committed
 EVAL_INDEX_DIR = EVAL_DIR / "index"              # built locally from the corpus, not committed
+EVAL_QUESTIONS_PATH = EVAL_DIR / "questions.jsonl"  # committed, reviewed by hand
 
 # --- Frontend ---
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")

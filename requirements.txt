@@ -9,7 +9,9 @@ faiss-cpu>=1.8
 numpy>=1.26
 
 # --- LLM (needs GEMINI_API_KEY) ---
-google-genai>=2.0
+# 3.x replaces httpx with httpx2; rag/llm.py catches httpx errors, so stay on 2.x until migrated.
+google-genai>=2.0,<3.0
+httpx>=0.28
 
 # --- API ---
 fastapi>=0.110
