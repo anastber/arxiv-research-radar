@@ -40,7 +40,7 @@ Because the live corpus changes weekly, evaluation runs against a **frozen snaps
 - [x] Golden question set (~100 questions), generated from source chunks and manually
       reviewed, including off-topic questions and multi-paper questions (122 questions:
       90 single-paper, 20 multi-paper, 12 off-topic; 37 hand-reviewed so far)
-- [ ] Retrieval metrics: Recall@k, MRR, nDCG, off-topic rejection accuracy
+- [x] Retrieval metrics: Recall@k, MRR, nDCG, off-topic rejection accuracy
 - [ ] Answer metrics: faithfulness, citation precision, answer relevance (LLM-judged,
       calibrated against a hand-graded sample)
 - [ ] `python -m eval.run` entry point producing a results table and a JSON report
