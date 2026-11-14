@@ -290,7 +290,8 @@ arxiv-research-radar/
 │   └── usage.py                  # SQLite daily cap + query log (entry point: `python -m api.usage`)
 ├── eval/
 │   ├── corpus.py               # Frozen benchmark corpus: fetch from arXiv, build its index (entry point)
-│   └── questions.py            # Golden question set: draft with Gemini, review interactively (entry point)
+│   ├── questions.py            # Golden question set: draft with Gemini, review interactively (entry point)
+│   └── retrieval.py            # Retrieval metrics on the question set: Recall@k, MRR, nDCG, rejection (entry point)
 ├── tests/                  # pytest suite (fake embeddings + fake LLM: no model download, no API key)
 ├── pyproject.toml          # ruff + pytest configuration
 └── .github/workflows/
@@ -339,6 +340,30 @@ python -m eval.questions review     # accept, edit or reject each pending questi
 
 Only `accepted` questions are used for evaluation. `generate` is resumable, and rerunning
 it after a review replaces rejected questions with new drafts from unused passages.
+
+**Retrieval metrics** are scored at the paper level, in two views:
+
+- *Ranking*: papers ordered by their best-matching chunk, with no score threshold.
+  Recall@k, MRR and nDCG@10 measure ranking quality independently of `MIN_SCORE`.
+- *Production*: `Retriever.search()` with the live settings, i.e. the exact context sent to
+  the LLM. `context_recall` is the share of relevant papers in that context, and `rejected`
+  the share of questions for which nothing cleared `MIN_SCORE`.
+
+```bash
+python -m eval.retrieval   # needs the benchmark index
+```
+
+Baseline (`all-MiniLM-L6-v2`, exact search, `TOP_K=6`, `MAX_CHUNKS_PER_PAPER=2`, `MIN_SCORE=0.3`):
+
+| Questions | n | Recall@1 | Recall@5 | Recall@10 | MRR | nDCG@10 | Context recall | Rejected |
+|---|---|---|---|---|---|---|---|---|
+| single-paper | 90 | 0.767 | 0.911 | 0.944 | 0.833 | 0.860 | 0.911 | 0.000 |
+| multi-paper | 20 | 0.400 | 0.800 | 0.850 | 0.850 | 0.786 | 0.775 | 0.000 |
+| off-topic | 12 | – | – | – | – | – | – | 0.417 |
+
+Recall@1 for multi-paper questions is capped at 0.5, since each has two relevant papers.
+Only 5 of the 12 off-topic questions are rejected: their best chunks score 0.23–0.48, while
+every in-scope question scores at least 0.50, so `MIN_SCORE=0.3` is too permissive.
 
 ## Configuration
 
