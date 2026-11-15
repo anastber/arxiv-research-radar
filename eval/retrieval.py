@@ -72,7 +72,8 @@ def summarize(results: list[dict]) -> dict:
             "n": len(rows),
             **{m: statistics.fmean(r[m] for r in rows) for m in metrics},
             "rejected": statistics.fmean(r["rejected"] for r in rows),
-            "median_top_score": statistics.median(r["top_score"] for r in rows if r["top_score"] is not None),
+            "median_top_score": statistics.median(scores) if (scores := [
+                r["top_score"] for r in rows if r["top_score"] is not None]) else None,
         }
     return summary
 
@@ -92,7 +93,7 @@ def format_table(summary: dict) -> str:
                                          "median_top_score"]
     lines = [f"{'':10} {'n':>4}  " + "  ".join(f"{c:>16}" for c in cols)]
     for name, row in summary.items():
-        cells = [f"{row[c]:16.3f}" if c in row else f"{'-':>16}" for c in cols]
+        cells = [f"{row[c]:16.3f}" if row.get(c) is not None else f"{'-':>16}" for c in cols]
         lines.append(f"{name:10} {row['n']:>4}  " + "  ".join(cells))
     return "\n".join(lines)
 

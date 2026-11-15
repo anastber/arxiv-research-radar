@@ -10,7 +10,8 @@ demo to a research assistant that stays accurate over a corpus of several thousa
 - Section-aware chunking over `pypdf`-extracted text
 - Grounded answers with per-paper citations, retrieval threshold for off-topic questions
 - Index and corpus versioned in the repository
-- No quality measurement yet
+- Benchmark on a frozen 437-paper corpus (122 questions): paper-level retrieval metrics and
+  LLM-judged answer metrics, run with `python -m eval.run`
 
 ## Approach
 
@@ -44,7 +45,7 @@ Because the live corpus changes weekly, evaluation runs against a **frozen snaps
 - [x] Answer metrics: faithfulness, citation precision, answer relevance (LLM-judged,
       calibrated against a hand-graded sample)
       (calibration sample of 20 answers graded by Claude Opus 5.5; human grading pending)
-- [ ] `python -m eval.run` entry point producing a results table and a JSON report
+- [x] `python -m eval.run` entry point producing a results table and a JSON report
 
 ## Milestone 3 — Retrieval quality
 
