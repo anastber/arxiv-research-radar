@@ -41,8 +41,9 @@ Because the live corpus changes weekly, evaluation runs against a **frozen snaps
       reviewed, including off-topic questions and multi-paper questions (122 questions:
       90 single-paper, 20 multi-paper, 12 off-topic; 37 hand-reviewed so far)
 - [x] Retrieval metrics: Recall@k, MRR, nDCG, off-topic rejection accuracy
-- [ ] Answer metrics: faithfulness, citation precision, answer relevance (LLM-judged,
+- [x] Answer metrics: faithfulness, citation precision, answer relevance (LLM-judged,
       calibrated against a hand-graded sample)
+      (calibration sample of 20 answers graded by Claude Opus 5.5; human grading pending)
 - [ ] `python -m eval.run` entry point producing a results table and a JSON report
 
 ## Milestone 3 — Retrieval quality

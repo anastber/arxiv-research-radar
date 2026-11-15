@@ -14,15 +14,13 @@ and chunking; the source passages are kept as `evidence` for finer-grained metri
 """
 import json
 import random
-import re
 import sys
-import time
 
 import faiss
 import numpy as np
 
 import config
-from rag import llm
+from eval.calls import ask_json
 from rag.llm import AnswerError
 
 TARGETS = {"single": 90, "multi": 20, "off_topic": 12}  # ~20% above the final ~100, to absorb rejections
@@ -30,8 +28,6 @@ SEED = 42
 MIN_WORDS = 80          # shorter chunks rarely hold a self-contained fact
 MIN_ALPHA_RATIO = 0.7   # share of alphabetic words; filters tables and equations extracted as text
 PAIR_SIM = (0.55, 0.9)  # cosine window for multi-paper pairs: related, but not the same text twice
-CALL_INTERVAL = 4       # seconds between LLM calls, to stay under free-tier rate limits
-RATE_LIMIT_WAIT = 60
 
 SYSTEM_PROMPT = """You write evaluation questions for a search assistant over arXiv papers \
 about retrieval-augmented generation (RAG).
@@ -57,8 +53,6 @@ Half should be clearly unrelated (biology, history, cooking, sports...). Half sh
 computer science topics that do not involve language models, retrieval, search, question answering \
 or NLP (e.g. compilers, robotics control, image compression).
 Reply with a JSON list of strings only."""
-
-JSON_RE = re.compile(r"[\[{].*[\]}]", re.S)  # outermost JSON value, ignoring code fences or prose
 
 
 def usable(chunk: dict) -> bool:
@@ -100,28 +94,8 @@ def pair_candidates(chunks: list[dict], vectors: np.ndarray, rng: random.Random)
             yield chunks[i], chunks[j]
 
 
-def parse_json(text: str):
-    m = JSON_RE.search(text)
-    if not m:
-        return None
-    try:
-        return json.loads(m.group())
-    except json.JSONDecodeError:
-        return None
-
-
 def ask(user: str, system: str = SYSTEM_PROMPT):
-    """One LLM call parsed as JSON (None if unparseable), waiting out rate limits."""
-    while True:
-        try:
-            completion = llm.complete(system, user)
-            time.sleep(CALL_INTERVAL)
-            return parse_json(completion.text)
-        except AnswerError as e:
-            if e.kind != "rate_limit":
-                raise
-            print(f"  rate limited, waiting {RATE_LIMIT_WAIT}s")
-            time.sleep(RATE_LIMIT_WAIT)
+    return ask_json(system, user)
 
 
 def passage(chunk: dict, label: str = "passage") -> str:

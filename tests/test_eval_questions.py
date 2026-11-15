@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import config
-from eval import questions
+from eval import calls, questions
 from rag.llm import AnswerError, Completion
 
 PROSE = " ".join(["retrieval"] * 90)
@@ -21,7 +21,7 @@ def eval_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "EVAL_DIR", tmp_path)
     monkeypatch.setattr(config, "EVAL_INDEX_DIR", tmp_path / "index")
     monkeypatch.setattr(config, "EVAL_QUESTIONS_PATH", tmp_path / "questions.jsonl")
-    monkeypatch.setattr(questions, "CALL_INTERVAL", 0)
+    monkeypatch.setattr(calls, "CALL_INTERVAL", 0)
     return tmp_path
 
 
@@ -70,7 +70,7 @@ def test_pair_candidates_pick_related_chunks_from_different_papers():
     ('{"question": ', None),
 ])
 def test_parse_json(text, expected):
-    assert questions.parse_json(text) == expected
+    assert calls.parse_json(text) == expected
 
 
 def test_questions_round_trip(eval_dir):
@@ -89,8 +89,9 @@ def test_ask_waits_out_rate_limits(monkeypatch):
             raise reply
         return reply
 
-    monkeypatch.setattr(questions.llm, "complete", fake_complete)
-    monkeypatch.setattr(questions, "RATE_LIMIT_WAIT", 0)
+    monkeypatch.setattr(calls.llm, "complete", fake_complete)
+    monkeypatch.setattr(calls, "RATE_LIMIT_WAIT", 0)
+    monkeypatch.setattr(calls, "CALL_INTERVAL", 0)
     assert questions.ask("user") == {"question": "Q?"}
 
 
@@ -102,7 +103,7 @@ def fake_llm(monkeypatch, skip_paper: str | None = None):
             return Completion('{"skip": "no content"}', 0, 0, False)
         return Completion(json.dumps({"question": f"Q{len(user)}?", "answer": "A."}), 0, 0, False)
 
-    monkeypatch.setattr(questions.llm, "complete", fake_complete)
+    monkeypatch.setattr(calls.llm, "complete", fake_complete)
 
 
 def test_generate_drafts_all_kinds_then_tops_up_rejected(eval_dir, monkeypatch):

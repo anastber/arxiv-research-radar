@@ -255,6 +255,8 @@ data/
 ├── eval/
 │   ├── corpus.json.gz   # frozen benchmark corpus (see Evaluation below)
 │   ├── questions.jsonl  # golden question set: LLM-drafted, reviewed by hand
+│   ├── answer_grades.jsonl  # hand grades of a sample of answers, used to calibrate the judge
+│   ├── answers.jsonl    # answers + judge verdicts of the last `eval.answers run` (not committed)
 │   └── index/           # benchmark index, built locally by `python -m eval.corpus index` (not committed)
 └── usage.db             # api.usage: SQLite — daily_counts + queries tables (created at API startup)
 ```
@@ -291,7 +293,9 @@ arxiv-research-radar/
 ├── eval/
 │   ├── corpus.py               # Frozen benchmark corpus: fetch from arXiv, build its index (entry point)
 │   ├── questions.py            # Golden question set: draft with Gemini, review interactively (entry point)
-│   └── retrieval.py            # Retrieval metrics on the question set: Recall@k, MRR, nDCG, rejection (entry point)
+│   ├── retrieval.py            # Retrieval metrics on the question set: Recall@k, MRR, nDCG, rejection (entry point)
+│   ├── answers.py              # Answer metrics graded by an LLM judge, calibrated on hand grades (entry point)
+│   └── calls.py                # Rate-limit-aware LLM calls and JSON parsing for the eval jobs
 ├── tests/                  # pytest suite (fake embeddings + fake LLM: no model download, no API key)
 ├── pyproject.toml          # ruff + pytest configuration
 └── .github/workflows/
@@ -364,6 +368,49 @@ Baseline (`all-MiniLM-L6-v2`, exact search, `TOP_K=6`, `MAX_CHUNKS_PER_PAPER=2`,
 Recall@1 for multi-paper questions is capped at 0.5, since each has two relevant papers.
 Only 5 of the 12 off-topic questions are rejected: their best chunks score 0.23–0.48, while
 every in-scope question scores at least 0.50, so `MIN_SCORE=0.3` is too permissive.
+
+**Answer metrics** run the full pipeline (retrieval, then Gemini) on every accepted question.
+An LLM judge splits each answer into claims and marks which retrieved sources support each one:
+
+| Metric | Definition |
+|---|---|
+| Faithfulness | share of claims supported by at least one retrieved source |
+| Citation precision | share of citations pointing to a source that supports the claim |
+| Relevance | how directly the answer addresses the question (judge score 1–5, rescaled to 0–1) |
+| Declined | share of answers saying the sources don't cover the question (should be 1 for off-topic only) |
+
+```bash
+python -m eval.answers run        # answer + judge every question (needs GEMINI_API_KEY; resumable)
+python -m eval.answers report     # metrics table from the last run, no LLM calls
+python -m eval.answers grade      # hand-grade a fixed sample of 20 answers
+python -m eval.answers calibrate  # re-judge the hand-graded answers and report agreement
+```
+
+The judge defaults to the answer model (`EVAL_JUDGE_MODEL` overrides it), which can bias it in
+its own favor. Its verdicts are therefore checked against hand grades: `answer_grades.jsonl`
+stores each graded answer with its sources, so calibration can be rerun whenever the judge
+prompt or model changes. A stored answer is reused by `run` only if the retrieval and model
+settings it was produced with are unchanged.
+
+Baseline (same retrieval settings as above, `gemini-3.5-flash-lite` as both answer model and judge):
+
+| Questions | n | Faithfulness | Citation precision | Relevance | Declined |
+|---|---|---|---|---|---|
+| single-paper | 90 | 1.000 | 0.997 | 0.847 | 0.156 |
+| multi-paper | 20 | 0.989 | 1.000 | 0.900 | 0.050 |
+| off-topic | 12 | – | – | – | 1.000 |
+
+- All off-topic questions are declined, including the 7 that clear `MIN_SCORE`: the answer
+  prompt's grounding rule catches what the retrieval threshold lets through.
+- 14 of the 15 declined in-scope answers had the right paper in context but not the passage
+  holding the answer (at most 2 chunks per paper are kept), so declines point to retrieval,
+  not generation.
+- The judge is lenient. The calibration sample (20 answers) was graded by Claude Opus 5.5, not
+  by a human; each grade records its `grader`. The judge agrees on 18/20 faithfulness verdicts
+  and 17/19 citation verdicts, but every disagreement is the judge missing an overstated claim
+  (e.g. "rises significantly" where the source reports a non-significant change). Faithfulness
+  is therefore overestimated: 2 of the 20 graded answers contain an unsupported claim. Relevance
+  scores differ by 0.35 points on average (1–5 scale).
 
 ## Configuration
 

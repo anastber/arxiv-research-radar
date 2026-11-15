@@ -76,7 +76,11 @@ def answer_question(question: str, retriever: Retriever) -> dict:
     If retrieval finds nothing above the similarity threshold, the LLM is not called
     at all (zero cost/quota) and a fixed "not covered" answer is returned.
     """
-    chunks = retriever.search(question)
+    return answer_from_chunks(question, retriever.search(question))
+
+
+def answer_from_chunks(question: str, chunks: list[dict]) -> dict:
+    """answer_question() for already-retrieved chunks (the sources are `build_sources(chunks)`)."""
     if not chunks:
         return {"answer": NO_CONTEXT_ANSWER, "cited_papers": [],
                 "usage": {"input_tokens": 0, "output_tokens": 0}, "truncated": False}
