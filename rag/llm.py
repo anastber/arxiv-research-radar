@@ -50,7 +50,8 @@ def _gemini_client() -> genai.Client:
     return _client
 
 
-def complete(system: str, user: str) -> Completion:
+def complete(system: str, user: str, model: str | None = None, max_tokens: int | None = None) -> Completion:
+    """`model` and `max_tokens` default to ANSWER_MODEL and MAX_ANSWER_TOKENS."""
     client = _gemini_client()
     thinking = (
         genai_types.ThinkingConfig(thinking_level=config.GEMINI_THINKING_LEVEL)
@@ -58,11 +59,11 @@ def complete(system: str, user: str) -> Completion:
     )
     try:
         resp = client.models.generate_content(
-            model=config.ANSWER_MODEL,
+            model=model or config.ANSWER_MODEL,
             contents=user,
             config=genai_types.GenerateContentConfig(
                 system_instruction=system,
-                max_output_tokens=config.MAX_ANSWER_TOKENS + config.GEMINI_THINKING_HEADROOM,
+                max_output_tokens=(max_tokens or config.MAX_ANSWER_TOKENS) + config.GEMINI_THINKING_HEADROOM,
                 thinking_config=thinking,
             ),
         )

@@ -50,6 +50,10 @@ EVAL_DIR = DATA_DIR / "eval"
 EVAL_CORPUS_PATH = EVAL_DIR / "corpus.json.gz"   # committed
 EVAL_INDEX_DIR = EVAL_DIR / "index"              # built locally from the corpus, not committed
 EVAL_QUESTIONS_PATH = EVAL_DIR / "questions.jsonl"  # committed, reviewed by hand
+EVAL_ANSWERS_PATH = EVAL_DIR / "answers.jsonl"      # answers + judge verdicts of the last run, not committed
+EVAL_GRADES_PATH = EVAL_DIR / "answer_grades.jsonl"  # committed: hand grades used to calibrate the judge
+# LLM judge for answer metrics. Defaults to the answer model; a stronger model reduces self-grading bias.
+EVAL_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", ANSWER_MODEL)
 
 # --- Frontend ---
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
