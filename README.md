@@ -257,6 +257,7 @@ data/
 │   ├── questions.jsonl  # golden question set: LLM-drafted, reviewed by hand
 │   ├── answer_grades.jsonl  # hand grades of a sample of answers, used to calibrate the judge
 │   ├── answers.jsonl    # answers + judge verdicts of the last `eval.answers run` (not committed)
+│   ├── results/         # JSON reports from `python -m eval.run`
 │   └── index/           # benchmark index, built locally by `python -m eval.corpus index` (not committed)
 └── usage.db             # api.usage: SQLite — daily_counts + queries tables (created at API startup)
 ```
@@ -294,7 +295,8 @@ arxiv-research-radar/
 │   ├── corpus.py               # Frozen benchmark corpus: fetch from arXiv, build its index (entry point)
 │   ├── questions.py            # Golden question set: draft with Gemini, review interactively (entry point)
 │   ├── retrieval.py            # Retrieval metrics on the question set: Recall@k, MRR, nDCG, rejection (entry point)
-│   ├── answers.py              # Answer metrics graded by an LLM judge, calibrated on hand grades (entry point)
+│   ├── answers.py              # Answer metrics graded by an LLM judge, calibrated on graded samples (entry point)
+│   ├── run.py                  # Full benchmark: retrieval + answer metrics, tables and a JSON report (entry point)
 │   └── calls.py                # Rate-limit-aware LLM calls and JSON parsing for the eval jobs
 ├── tests/                  # pytest suite (fake embeddings + fake LLM: no model download, no API key)
 ├── pyproject.toml          # ruff + pytest configuration
@@ -411,6 +413,16 @@ Baseline (same retrieval settings as above, `gemini-3.5-flash-lite` as both answ
   (e.g. "rises significantly" where the source reports a non-significant change). Faithfulness
   is therefore overestimated: 2 of the 20 graded answers contain an unsupported claim. Relevance
   scores differ by 0.35 points on average (1–5 scale).
+
+**Full benchmark.** `python -m eval.run` runs both evaluations with a single retriever and
+prints both tables. It writes a JSON report to `data/eval/results/` that records the git commit
+(and whether the working tree was dirty), the settings, a hash of the question set, and
+per-question metrics. Numbers quoted in this README come from a committed report.
+
+```bash
+python -m eval.run                   # retrieval + answers (reuses stored answers when settings match)
+python -m eval.run --retrieval-only  # no LLM calls, no API key needed
+```
 
 ## Configuration
 

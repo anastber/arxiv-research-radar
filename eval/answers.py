@@ -157,14 +157,10 @@ def report() -> int:
     return 0
 
 
-def run() -> int:
-    questions = [q for q in load_questions() if q["status"] == "accepted"]
-    try:
-        retriever = Retriever(config.EVAL_INDEX_DIR)
-    except IndexNotBuiltError:
-        print("ERROR: no benchmark index. Run `python -m eval.corpus index` first.", file=sys.stderr)
-        return 1
-    # Keep answers from an interrupted run with the same settings; anything else is redone.
+def answer_all(retriever: Retriever, questions: list[dict]) -> list[dict]:
+    """Answer + judge every accepted question, reusing stored answers produced with the current
+    settings (so an interrupted run resumes). Returns all records. Raises AnswerError."""
+    questions = [q for q in questions if q["status"] == "accepted"]
     current = run_config()
     ids = {q["id"] for q in questions}
     kept = [r for r in load_jsonl(config.EVAL_ANSWERS_PATH)
@@ -174,12 +170,24 @@ def run() -> int:
     todo = [q for q in questions if q["id"] not in done]
     print(f"{len(questions)} questions, {len(done)} already answered with these settings, {len(todo)} to go")
 
+    records = kept
+    for i, q in enumerate(todo, 1):
+        record = answer_one(retriever, q)
+        write_jsonl(config.EVAL_ANSWERS_PATH, [record], mode="a")
+        records.append(record)
+        verdict = "judge failed" if not record["judgment"] else answer_metrics(record["judgment"])
+        print(f"[{i}/{len(todo)}] {q['id']} [{q['kind']}] {verdict}")
+    return records
+
+
+def run() -> int:
     try:
-        for i, q in enumerate(todo, 1):
-            record = answer_one(retriever, q)
-            write_jsonl(config.EVAL_ANSWERS_PATH, [record], mode="a")
-            verdict = "judge failed" if not record["judgment"] else answer_metrics(record["judgment"])
-            print(f"[{i}/{len(todo)}] {q['id']} [{q['kind']}] {verdict}")
+        retriever = Retriever(config.EVAL_INDEX_DIR)
+    except IndexNotBuiltError:
+        print("ERROR: no benchmark index. Run `python -m eval.corpus index` first.", file=sys.stderr)
+        return 1
+    try:
+        answer_all(retriever, load_questions())
     except AnswerError as e:
         print(f"ERROR: {e} Progress is saved; rerun to continue.", file=sys.stderr)
         return 1

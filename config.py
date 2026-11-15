@@ -51,7 +51,8 @@ EVAL_CORPUS_PATH = EVAL_DIR / "corpus.json.gz"   # committed
 EVAL_INDEX_DIR = EVAL_DIR / "index"              # built locally from the corpus, not committed
 EVAL_QUESTIONS_PATH = EVAL_DIR / "questions.jsonl"  # committed, reviewed by hand
 EVAL_ANSWERS_PATH = EVAL_DIR / "answers.jsonl"      # answers + judge verdicts of the last run, not committed
-EVAL_GRADES_PATH = EVAL_DIR / "answer_grades.jsonl"  # committed: hand grades used to calibrate the judge
+EVAL_GRADES_PATH = EVAL_DIR / "answer_grades.jsonl"  # committed: human or model grades, to calibrate the judge
+EVAL_RESULTS_DIR = EVAL_DIR / "results"            # JSON reports from `python -m eval.run`
 # LLM judge for answer metrics. Defaults to the answer model; a stronger model reduces self-grading bias.
 EVAL_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", ANSWER_MODEL)
 
