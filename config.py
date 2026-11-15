@@ -15,6 +15,9 @@ ARXIV_MAX_PAPERS = int(os.getenv("ARXIV_MAX_PAPERS", "20"))
 
 # --- Chunking / embedding / index ---
 EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+# Prepended to questions (not passages) before embedding, for models trained with a query
+# instruction, e.g. "Represent this sentence for searching relevant passages: " for bge.
+EMBED_QUERY_PREFIX = os.getenv("EMBED_QUERY_PREFIX", "")
 INDEX_DIR = DATA_DIR / "index"
 FAISS_FILE = "faiss.index"    # inside an index directory, row-aligned with...
 CHUNKS_FILE = "chunks.json"   # ...the chunk text + metadata
@@ -22,9 +25,13 @@ CHUNK_WORDS = 160      # target chunk size; MiniLM truncates input beyond ~256 t
 CHUNK_OVERLAP = 1      # sentences repeated between adjacent chunks within a section
 
 # --- Retrieval ---
+RETRIEVAL_MODE = os.getenv("RETRIEVAL_MODE", "hybrid")   # hybrid (dense + BM25, fused with RRF) | dense
+# Cross-encoder that re-scores the first RERANK_CANDIDATES results; empty = no reranking.
+RERANK_MODEL = os.getenv("RERANK_MODEL", "")
+RERANK_CANDIDATES = 50
 TOP_K = int(os.getenv("TOP_K", "6"))                    # chunks sent to the LLM
 MAX_CHUNKS_PER_PAPER = 2                                # keeps context spread across papers
-MIN_SCORE = float(os.getenv("MIN_SCORE", "0.3"))        # cosine sim below this = "not covered"
+MIN_SCORE = float(os.getenv("MIN_SCORE", "0.45"))       # best cosine sim below this = "not covered"
 
 # --- Answer generation ---
 # API key comes from GEMINI_API_KEY in the environment, never from code.
@@ -48,7 +55,8 @@ PRICE_OUTPUT_PER_MTOK = float(os.getenv("PRICE_OUTPUT_PER_MTOK", "0"))
 # --- Evaluation (frozen benchmark, independent of the live corpus) ---
 EVAL_DIR = DATA_DIR / "eval"
 EVAL_CORPUS_PATH = EVAL_DIR / "corpus.json.gz"   # committed
-EVAL_INDEX_DIR = EVAL_DIR / "index"              # built locally from the corpus, not committed
+# One benchmark index per embedding model, built locally from the corpus, not committed.
+EVAL_INDEX_DIR = EVAL_DIR / "index" / EMBED_MODEL.replace("/", "__")
 EVAL_QUESTIONS_PATH = EVAL_DIR / "questions.jsonl"  # committed, reviewed by hand
 EVAL_ANSWERS_PATH = EVAL_DIR / "answers.jsonl"      # answers + judge verdicts of the last run, not committed
 EVAL_GRADES_PATH = EVAL_DIR / "answer_grades.jsonl"  # committed: human or model grades, to calibrate the judge

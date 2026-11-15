@@ -96,7 +96,7 @@ def test_ask_waits_out_rate_limits(monkeypatch):
 
 
 def fake_llm(monkeypatch, skip_paper: str | None = None):
-    def fake_complete(system, user):
+    def fake_complete(system, user, **kwargs):
         if "JSON list" in user:
             return Completion('["How do bees fly?", "How do compilers inline?"]', 0, 0, False)
         if skip_paper and f"Paper {skip_paper}" in user:

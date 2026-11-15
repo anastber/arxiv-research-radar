@@ -90,7 +90,7 @@ flowchart LR
         Browser["Browser"] --> UI["Streamlit UI<br/>app.py"]
         UI -->|"GET /papers<br/>POST /ask"| API["FastAPI<br/>api/main.py"]
         API --> Guard["api.ratelimit + api.usage<br/>per-IP limit · daily cap · SQLite log"]
-        API --> Retriever["rag.retriever.Retriever<br/>FAISS top-k search"]
+        API --> Retriever["rag.retriever.Retriever<br/>FAISS + BM25 hybrid search"]
         Retriever --> Store
         API --> LLM["rag.llm<br/>Gemini"]
         Guard --> UsageDB[("data/usage.db")]
@@ -123,7 +123,7 @@ Two things fall out of this split immediately:
 | 5. Embed + index | `rag/index.py` | Encodes `"{title} \| {section}\n{text}"` for every chunk with a local `SentenceTransformer` (default `all-MiniLM-L6-v2`), normalizes to unit vectors, and builds a `faiss.IndexFlatIP` (exact inner-product search — cosine similarity, since vectors are unit length). Writes `data/index/faiss.index` (vectors) and `data/index/chunks.json` (text + metadata), aligned by row index. |
 
 **Automation:** [`.github/workflows/weekly-refresh.yml`](.github/workflows/weekly-refresh.yml)
-runs steps 1–5 every Monday, sanity-checks the rebuilt index with a smoke-test query, and
+runs steps 1–5 every Monday (currently disabled), sanity-checks the rebuilt index with a smoke-test query, and
 commits the changed `data/` files straight to the branch — no secrets required, since
 nothing in this path calls an LLM.
 
@@ -175,7 +175,7 @@ sequenceDiagram
         UI-->>User: "demo limit reached" message
     else slot reserved
         API->>Ret: search(question)
-        Ret-->>API: top-k chunks (score >= MIN_SCORE), or []
+        Ret-->>API: top-k chunks (hybrid), or [] if best score < MIN_SCORE
         alt nothing relevant found
             API-->>UI: fixed "not covered" answer — LLM never called
         else relevant chunks found
@@ -200,10 +200,10 @@ These keep LLM usage predictable on Gemini's free tier:
    it's race-free under concurrent requests without needing a lock. If the LLM call then
    fails, `release_daily_slot()` gives the slot back — a failed request shouldn't burn
    quota.
-4. **Retrieval threshold** — `Retriever.search()` returns `[]` when nothing clears
-   `MIN_SCORE`; `answer_question()` short-circuits to a canned "not covered" response
-   **without calling the LLM at all**. This is the single biggest cost control: most
-   off-topic questions never reach the paid/rate-limited API.
+4. **Retrieval threshold** — `Retriever.search()` returns `[]` when the question's best
+   chunk scores below `MIN_SCORE`; `answer_question()` short-circuits to a canned "not
+   covered" response **without calling the LLM at all**, so clearly off-topic questions
+   never reach the rate-limited API (about half of the benchmark's near-domain ones too).
 5. **Output token cap** — `MAX_ANSWER_TOKENS` bounds the LLM call itself, so even an
    answered question has a predictable worst-case cost.
 
@@ -284,7 +284,8 @@ arxiv-research-radar/
 ├── rag/
 │   ├── chunker.py             # Section-aware paper -> chunk splitting
 │   ├── index.py                # chunks -> embeddings -> FAISS index (entry point)
-│   ├── retriever.py            # Loads the index; top-k cosine search with per-paper cap
+│   ├── retriever.py            # Loads the index; hybrid (dense + BM25) search, per-paper cap, optional reranker
+│   ├── bm25.py                 # BM25 over chunk texts + Reciprocal Rank Fusion
 │   ├── llm.py                   # complete() over the Gemini API, with SDK errors normalized to AnswerError
 │   └── answer.py                 # Retrieval + prompt construction + citation extraction (entry point)
 ├── api/
@@ -321,7 +322,7 @@ The benchmark is every paper matching the default query submitted between 2026-0
 means the paper list can always be re-derived from arXiv.
 
 ```bash
-python -m eval.corpus index   # build data/eval/index/ from the committed corpus (~5 min on CPU)
+python -m eval.corpus index   # build data/eval/index/<EMBED_MODEL>/ from the committed corpus (~5 min on CPU)
 python -m eval.corpus fetch   # maintainers only: re-download the corpus from arXiv (~30 min)
 ```
 
@@ -370,6 +371,34 @@ Baseline (`all-MiniLM-L6-v2`, exact search, `TOP_K=6`, `MAX_CHUNKS_PER_PAPER=2`,
 Recall@1 for multi-paper questions is capped at 0.5, since each has two relevant papers.
 Only 5 of the 12 off-topic questions are rejected: their best chunks score 0.23–0.48, while
 every in-scope question scores at least 0.50, so `MIN_SCORE=0.3` is too permissive.
+
+**Retrieval ablations.** Each change was benchmarked against the dense baseline on the 110
+in-scope questions (`python -m eval.run --retrieval-only`):
+
+| Configuration | Recall@1 | Recall@5 | MRR | nDCG@10 | Context recall |
+|---|---|---|---|---|---|
+| MiniLM, dense (baseline) | 0.700 | 0.891 | 0.836 | 0.847 | 0.886 |
+| `bge-small-en-v1.5`, dense | 0.677 | 0.836 | 0.792 | 0.807 | 0.841 |
+| **MiniLM, hybrid (BM25 + RRF)** | 0.791 | **0.945** | 0.913 | 0.920 | **0.945** |
+| `bge-small-en-v1.5`, hybrid | 0.777 | 0.914 | 0.893 | 0.901 | 0.927 |
+| MiniLM, hybrid + `ms-marco-MiniLM-L-6-v2` reranker | 0.800 | 0.923 | 0.898 | 0.903 | 0.918 |
+| MiniLM, hybrid + `bge-reranker-base` reranker | **0.809** | 0.932 | **0.918** | **0.923** | 0.927 |
+
+- **Hybrid search** is the clear gain and is now the default (`RETRIEVAL_MODE=hybrid`): BM25
+  recovers passages that share exact terms with the question. The questions were drafted from
+  passages, which favors lexical matching somewhat, so the gain on real queries may be smaller.
+- **`bge-small`** does not beat MiniLM here, with or without its query instruction. Multi-paper
+  pairs were selected with MiniLM similarities, but MiniLM also wins on single-paper questions.
+- **Reranking** slightly improves the top of the ranking but lowers context recall, the share
+  of relevant papers the LLM actually sees, and `bge-reranker-base` is slow on CPU. It stays
+  off by default (`RERANK_MODEL` enables it).
+- **Threshold.** 18 near-domain off-topic questions (vision, reinforcement learning, speech,
+  diffusion models; reviewed by Claude Opus 5.5, 1 rejected) were added to the 12 existing ones.
+  Their best chunks score up to 0.57, overlapping the lowest in-scope score (0.50), so no
+  threshold separates them perfectly. `MIN_SCORE=0.45` rejects 15 of 29 off-topic questions
+  (5 at 0.3) and no in-scope question, keeping a margin for real queries, which match passages
+  less closely than drafted questions. Off-topic questions that clear the threshold are still
+  declined by the answer model.
 
 **Answer metrics** run the full pipeline (retrieval, then Gemini) on every accepted question.
 An LLM judge splits each answer into claims and marks which retrieved sources support each one:
