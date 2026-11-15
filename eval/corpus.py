@@ -3,7 +3,7 @@ window, so the set never changes as new papers come out (unlike data/papers.json
 
     python -m eval.corpus fetch   # arXiv -> data/eval/corpus.json.gz (slow, one-time; resumable,
                                   # failed downloads are retried on the next run)
-    python -m eval.corpus index   # corpus -> data/eval/index/ (needed before running the eval)
+    python -m eval.corpus index   # corpus -> data/eval/index/<EMBED_MODEL>/ (needed before running the eval)
 """
 import gzip
 import json

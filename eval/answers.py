@@ -51,7 +51,9 @@ REJECTED_JUDGMENT = {"claims": [], "declined": True, "relevance": 1}
 
 def run_config() -> dict:
     """Settings an answer depends on: a stored answer is reused only if they haven't changed."""
-    return {"embed_model": config.EMBED_MODEL, "top_k": config.TOP_K,
+    return {"embed_model": config.EMBED_MODEL, "embed_query_prefix": config.EMBED_QUERY_PREFIX,
+            "retrieval_mode": config.RETRIEVAL_MODE, "rerank_model": config.RERANK_MODEL,
+            "top_k": config.TOP_K,
             "max_chunks_per_paper": config.MAX_CHUNKS_PER_PAPER, "min_score": config.MIN_SCORE,
             "answer_model": config.ANSWER_MODEL, "max_answer_tokens": config.MAX_ANSWER_TOKENS,
             "judge_model": config.EVAL_JUDGE_MODEL}

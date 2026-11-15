@@ -44,7 +44,7 @@ def score_question(retriever: Retriever, q: dict) -> dict:
     result = {
         "id": q["id"],
         "kind": q["kind"],
-        "top_score": ranking[0]["score"] if ranking else None,
+        "top_score": max(h["score"] for h in ranking) if ranking else None,
         "rejected": not context,
     }
     if q["kind"] == "off_topic":
@@ -81,7 +81,9 @@ def summarize(results: list[dict]) -> dict:
 def evaluate(retriever: Retriever, questions: list[dict]) -> dict:
     results = [score_question(retriever, q) for q in questions if q["status"] == "accepted"]
     return {
-        "config": {"embed_model": config.EMBED_MODEL, "top_k": config.TOP_K,
+        "config": {"embed_model": config.EMBED_MODEL, "embed_query_prefix": config.EMBED_QUERY_PREFIX,
+                   "retrieval_mode": config.RETRIEVAL_MODE, "rerank_model": config.RERANK_MODEL,
+                   "top_k": config.TOP_K,
                    "max_chunks_per_paper": config.MAX_CHUNKS_PER_PAPER, "min_score": config.MIN_SCORE},
         "summary": summarize(results),
         "questions": results,

@@ -7,7 +7,7 @@ Future directions.
 ## Current state
 
 - 20 papers / ~1,000 chunks; the weekly refresh workflow exists but is currently disabled
-- Dense retrieval only (`all-MiniLM-L6-v2` + exact FAISS search)
+- Hybrid retrieval: `all-MiniLM-L6-v2` + exact FAISS search, fused with BM25 (RRF)
 - Section-aware chunking over `pypdf`-extracted text
 - Grounded answers with per-paper citations, retrieval threshold for off-topic questions
 - Index and corpus versioned in the repository
@@ -55,12 +55,14 @@ that answers the question (14 of 15 declined in-scope answers). Each change is b
 against the previous configuration with `python -m eval.run`, and the results are published
 as an ablation table in the README.
 
-- [ ] **Embedding model:** compare a stronger open model (`bge` / `e5` family) to `all-MiniLM-L6-v2`
-- [ ] **Hybrid search:** BM25 + dense retrieval combined with Reciprocal Rank Fusion, to
+- [x] **Embedding model:** compare a stronger open model (`bge` / `e5` family) to `all-MiniLM-L6-v2`
+- [x] **Hybrid search:** BM25 + dense retrieval combined with Reciprocal Rank Fusion, to
       better match exact terms such as method names and acronyms
-- [ ] **Reranking:** cross-encoder reranking of a wider candidate set
-- [ ] **Off-topic threshold:** add near-domain off-topic questions, then retune `MIN_SCORE`
-      (or move it to the reranker score)
+- [x] **Reranking:** cross-encoder reranking of a wider candidate set
+- [x] **Off-topic threshold:** add near-domain off-topic questions, then retune `MIN_SCORE`
+
+Outcome: hybrid search is the default; `bge-small` and reranking did not improve context recall
+and stay off; `MIN_SCORE` is 0.45. See the ablation table in the README.
 
 ## Milestone 4 — Deployment
 
