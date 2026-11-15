@@ -1,11 +1,12 @@
 # Roadmap
 
-This document outlines the planned evolution of arxiv-research-radar, from a 20-paper
-demo to a research assistant that stays accurate over a corpus of several thousand papers.
+This document outlines the remaining work on arxiv-research-radar: improving retrieval quality
+against the benchmark, then shipping a public deployment. Larger-scale features are listed under
+Future directions.
 
 ## Current state
 
-- 20 papers / ~1,000 chunks, refreshed weekly by GitHub Actions
+- 20 papers / ~1,000 chunks; the weekly refresh workflow exists but is currently disabled
 - Dense retrieval only (`all-MiniLM-L6-v2` + exact FAISS search)
 - Section-aware chunking over `pypdf`-extracted text
 - Grounded answers with per-paper citations, retrieval threshold for off-topic questions
@@ -49,50 +50,34 @@ Because the live corpus changes weekly, evaluation runs against a **frozen snaps
 
 ## Milestone 3 — Retrieval quality
 
-Each item is benchmarked against the previous configuration; results are published as an
-ablation table in the README.
+The baseline shows the main weakness: the right paper is often retrieved but not the passage
+that answers the question (14 of 15 declined in-scope answers). Each change is benchmarked
+against the previous configuration with `python -m eval.run`, and the results are published
+as an ablation table in the README.
 
-- [ ] **Document parsing:** use arXiv HTML or LaTeX sources instead of PDF text extraction
-      for cleaner structure and more reliable section boundaries
-- [ ] **Embedding model:** compare stronger open models (`bge`, `e5`, `gte` families)
+- [ ] **Embedding model:** compare a stronger open model (`bge` / `e5` family) to `all-MiniLM-L6-v2`
 - [ ] **Hybrid search:** BM25 + dense retrieval combined with Reciprocal Rank Fusion, to
       better match exact terms such as method names and acronyms
-- [ ] **Reranking:** cross-encoder reranking of a wider candidate set, with the relevance
-      threshold moved to the reranker score
-- [ ] **Chunking:** chunk size tuning, parent-child retrieval, contextual chunk enrichment
+- [ ] **Reranking:** cross-encoder reranking of a wider candidate set
+- [ ] **Off-topic threshold:** add near-domain off-topic questions, then retune `MIN_SCORE`
+      (or move it to the reranker score)
 
-## Milestone 4 — Scaling the corpus
+## Milestone 4 — Deployment
 
-Target: 5,000–10,000 papers across several arXiv categories.
-
-- [ ] Move the index out of the repository into a published artifact
-- [ ] Replace `papers.json` with a database (SQLite or Postgres)
-- [ ] Incremental indexing (additions and removals) instead of full rebuilds
-- [ ] Vector store with metadata filtering (Qdrant or pgvector): date, category, authors
-- [ ] Bulk, resumable ingestion respecting arXiv rate limits
-- [ ] Benchmark approximate-search recall and latency against exact search
-
-## Milestone 5 — Query understanding and answer generation
-
-- [ ] Structured filters extracted from the question ("since September", "in cs.CR")
-- [ ] Query expansion (multi-query, HyDE), kept only where the benchmark shows a gain
-- [ ] Multi-turn conversations with follow-up questions
-- [ ] Streaming responses
-- [ ] Sentence-level citation verification before an answer is returned
-- [ ] Multi-step retrieval for comparative and multi-hop questions
-- [ ] Corpus-level questions (e.g. "main trends this month") via summarization over
-      paper clusters
-
-## Milestone 6 — Production readiness
-
-- [ ] Request tracing, including retrieved chunk ids per answer
-- [ ] User feedback on answers, feeding the evaluation set
-- [ ] Retrieval benchmark as a regression check in the weekly refresh workflow
-- [ ] Docker image and public deployment
-- [ ] Response caching
+- [ ] Docker image for the API and the Streamlit app
+- [ ] Public deployment
+- [ ] Move the index out of the repository (built at image build time or published as an
+      artifact), to stop the weekly refresh from growing git history
 
 ## Future directions
 
-- Weekly topic digests and alerts
-- Related-paper recommendations
-- Citation graph integration (Semantic Scholar API)
+Out of scope for now, kept as possible extensions:
+
+- Cleaner document parsing from arXiv HTML or LaTeX sources instead of PDF text
+- Chunking experiments (chunk size, parent-child retrieval, contextual enrichment)
+- Scaling to thousands of papers: database instead of `papers.json`, incremental indexing,
+  a vector store with metadata filtering
+- Query understanding: structured filters ("since September"), query expansion
+- Multi-turn conversations, streaming responses, sentence-level citation verification
+- Request tracing, user feedback, retrieval regression check in CI, response caching
+- Weekly topic digests, related-paper recommendations, citation graph integration
