@@ -1,4 +1,4 @@
-"""Per-IP rate limiting with slowapi (in-memory counters, single process)."""
+"""Per-visitor rate limiting with slowapi (in-memory counters, single process)."""
 import time
 
 from fastapi import Request
@@ -9,7 +9,15 @@ from slowapi.util import get_remote_address
 
 import config
 
-limiter = Limiter(key_func=get_remote_address)
+
+def client_ip(request: Request) -> str:
+    """The visitor's IP. Requests reach the API through the Streamlit frontend, so the socket
+    address is the frontend's; the frontend forwards the visitor's address in X-Visitor-IP.
+    The header is trusted because the API is only reachable from the frontend (see Dockerfile)."""
+    return request.headers.get("X-Visitor-IP") or get_remote_address(request)
+
+
+limiter = Limiter(key_func=client_ip)
 
 
 def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:

@@ -24,6 +24,7 @@ def client(monkeypatch, tmp_path):
     papers_path.write_text(json.dumps([PAPER]))
     monkeypatch.setattr(config, "PAPERS_PATH", papers_path)
     monkeypatch.setattr(config, "USAGE_DB_PATH", tmp_path / "usage.db")
+    monkeypatch.setattr(config, "REFRESH_HOURS", 0)  # no background arXiv fetch in tests
     monkeypatch.setattr(main, "Retriever", lambda: object())  # no index or embedding model needed
     monkeypatch.setattr(main, "answer_question", lambda question, retriever: ANSWER)
     limiter.reset()
@@ -80,3 +81,19 @@ def test_per_ip_rate_limit_returns_429(client, monkeypatch):
     assert resp.status_code == 429
     assert resp.json()["error"] == "rate_limit"
     assert "Retry-After" in resp.headers
+
+
+def test_ask_is_unavailable_while_the_index_is_built(client):
+    client.app.state.retriever = None
+    assert client.get("/health").json()["status"] == "building_index"
+    assert client.post("/ask", json={"question": "What does X do?"}).status_code == 503
+
+
+def test_rate_limit_is_per_forwarded_visitor(client):
+    def ask(ip):
+        return client.post("/ask", json={"question": "What does X do?"}, headers={"X-Visitor-IP": ip})
+
+    limit = int(config.ASK_RATE_LIMIT.split("/")[0])
+    assert all(ask("1.1.1.1").status_code == 200 for _ in range(limit))
+    assert ask("1.1.1.1").status_code == 429
+    assert ask("2.2.2.2").status_code == 200  # another visitor behind the same frontend
