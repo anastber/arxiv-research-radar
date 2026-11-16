@@ -8,7 +8,10 @@ __pycache__/
 data/usage.db
 data/queries.log
 
-# data/papers.json and data/index/ ARE committed: the weekly GitHub Action refreshes them
+# live corpus: fetched and indexed by the running API (api/refresh.py), never committed
+data/papers.json
+data/index/
+data/index.new/
 
 # benchmark index: rebuilt locally from data/eval/corpus.json.gz (which is committed)
 data/eval/index/

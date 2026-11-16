@@ -1,0 +1,39 @@
+name: Deploy to Hugging Face Space
+
+# Pushes a snapshot of main to the Space, which rebuilds the Docker image. Needs the HF_SPACE
+# repository variable (e.g. "user/arxiv-research-radar") and the HF_TOKEN secret (write token).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-space
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    if: vars.HF_SPACE != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Push a snapshot to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          # Spaces read their settings from the README front matter; the GitHub README stays clean.
+          cat deploy/space-header.md README.md > README.space && mv README.space README.md
+          # The Space only needs the app. Spaces also reject plain-git binaries (screenshots).
+          rm -rf data/eval docs tests
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # A single orphan commit: the Space gets the current files, not the repo history.
+          git checkout --orphan space
+          git add -A
+          git commit -qm "Deploy ${GITHUB_SHA::7}"
+          git push --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" space:main

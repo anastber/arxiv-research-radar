@@ -48,11 +48,19 @@ def show_answer(data: dict) -> None:
             st.markdown(f"**[{p['id']}]** [{esc(p['title'])}]({p['url']}) · arXiv:{p['arxiv_id']}")
 
 
+def visitor_headers() -> dict:
+    """Forward the visitor's IP so the API rate-limits per visitor, not per frontend server.
+    Behind a proxy (e.g. Hugging Face Spaces) it is the first X-Forwarded-For entry."""
+    ip = (st.context.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    return {"X-Visitor-IP": ip} if ip else {}
+
+
 def ask(question: str) -> None:
     try:
         resp = requests.post(
             f"{config.API_URL}/ask",
             json={"question": question},
+            headers=visitor_headers(),
             timeout=100,  # the API itself allows up to ~30s per LLM attempt, with retries
         )
     except requests.Timeout:
@@ -86,8 +94,11 @@ with st.sidebar:
     except requests.RequestException:
         papers = []
         st.error("Couldn't load the paper list (backend unreachable).")
+    if not papers:
+        load_papers.clear()  # don't keep an empty list cached once the index is ready
+        st.info("The paper index is being built (about two minutes after a restart).")
     if papers:
-        st.caption(f"{len(papers)} most recent arXiv papers on the topic, refreshed weekly.")
+        st.caption(f"The {len(papers)} most recent arXiv papers on the topic, refreshed daily.")
         for p in papers:
             authors = ", ".join(p["authors"][:2]) + (" et al." if len(p["authors"]) > 2 else "")
             st.markdown(f"[{esc(p['title'])}]({p['abs_url']})  \n<small>{authors} · {p['published'][:10]}</small>",

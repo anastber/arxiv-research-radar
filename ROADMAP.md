@@ -6,11 +6,11 @@ Future directions.
 
 ## Current state
 
-- 20 papers / ~1,000 chunks; the weekly refresh workflow exists but is currently disabled
+- Live corpus: the 20 most recent papers, re-fetched and re-indexed daily inside the API
 - Hybrid retrieval: `all-MiniLM-L6-v2` + exact FAISS search, fused with BM25 (RRF)
 - Section-aware chunking over `pypdf`-extracted text
 - Grounded answers with per-paper citations, retrieval threshold for off-topic questions
-- Index and corpus versioned in the repository
+- Live corpus and index built at runtime, not versioned; the benchmark corpus is versioned
 - Benchmark on a frozen 437-paper corpus (122 questions): paper-level retrieval metrics and
   LLM-judged answer metrics, run with `python -m eval.run`
 
@@ -35,7 +35,7 @@ Future directions.
 
 ## Milestone 2 — Evaluation framework
 
-Because the live corpus changes weekly, evaluation runs against a **frozen snapshot**
+Because the live corpus changes daily, evaluation runs against a **frozen snapshot**
 (corpus + index) so results stay comparable over time.
 
 - [x] Frozen benchmark corpus of 300–500 papers (437 papers, 2026-08-01 → 2026-09-30)
@@ -66,10 +66,12 @@ and stay off; `MIN_SCORE` is 0.45. See the ablation table in the README.
 
 ## Milestone 4 — Deployment
 
-- [ ] Docker image for the API and the Streamlit app
-- [ ] Public deployment
-- [ ] Move the index out of the repository (built at image build time or published as an
-      artifact), to stop the weekly refresh from growing git history
+- [x] Daily corpus refresh inside the API: the 20 most recent papers replace the previous
+      ones, swapped in without downtime (replaces the weekly GitHub Actions refresh)
+- [x] Docker image for the API and the Streamlit app
+- [x] Continuous deployment of `main` to a Hugging Face Space
+- [x] Live corpus and index removed from the repository
+- [ ] Public deployment live (Space created, secrets configured)
 
 ## Future directions
 

@@ -15,7 +15,7 @@ put together**.
 
 ![A cited answer drawing on two papers](docs/screenshots/answer.png)
 
-| Off-topic question: the LLM is never called | Per-IP rate limit reached |
+| Off-topic question: the LLM is never called | Per-visitor rate limit reached |
 |---|---|
 | ![Not-covered response](docs/screenshots/not-covered.png) | ![Rate limit message](docs/screenshots/rate-limit.png) |
 
@@ -24,7 +24,8 @@ put together**.
 ## Quickstart
 
 Requires Python 3.12+ and a free [Gemini API key](https://aistudio.google.com/apikey).
-The repo already contains a built index (`data/index/`), so there's no ingestion step.
+The corpus is not stored in the repo: on first start the API fetches the latest papers
+from arXiv and builds its index (about two minutes).
 
 ```bash
 git clone https://github.com/anastber/arxiv-research-radar.git
@@ -44,20 +45,21 @@ uvicorn api.main:app --port 8000     # terminal 1, wait for "Application startup
 streamlit run app.py                 # terminal 2, opens http://localhost:8501
 ```
 
-The first start downloads the embedding model (~90 MB) from Hugging Face, so it takes a
-little longer. `curl http://localhost:8000/health` should return `{"status":"ok","papers":20}`.
+The first start also downloads the embedding model (~90 MB) from Hugging Face.
+`curl http://localhost:8000/health` returns `{"status":"building_index",...}` until the
+index is ready, then `{"status":"ok","papers":20}`.
 
-### Rebuilding the index (optional)
+### Corpus refresh
 
-To pull the latest papers, or index a different topic after changing `ARXIV_QUERY` in
-`.env`:
+The API re-fetches the `ARXIV_MAX_PAPERS` most recent papers every `REFRESH_HOURS` (default
+24) and swaps the new index in without downtime; older papers are dropped. To index a
+different topic, change `ARXIV_QUERY` in `.env` and delete `data/index/`; the next start
+rebuilds it. The two stages can also be run by hand:
 
 ```bash
 python -m ingest.fetch      # arXiv -> data/papers.json
 python -m rag.index         # papers -> data/index/
 ```
-
-Restart uvicorn afterwards: the index is loaded once at startup.
 
 ### Other entry points
 
@@ -76,7 +78,7 @@ questions against that index.
 
 ```mermaid
 flowchart LR
-    subgraph Offline["Offline pipeline — weekly, via GitHub Actions"]
+    subgraph Offline["Corpus refresh — daily, in a background thread of the API"]
         direction TB
         Arxiv[("arXiv API<br/>(Atom feed + PDFs)")] --> Fetch["ingest.fetch<br/>ingest.arxiv_client<br/>ingest.pdf_parser"]
         Fetch --> Papers[("data/papers.json")]
@@ -89,26 +91,24 @@ flowchart LR
         direction TB
         Browser["Browser"] --> UI["Streamlit UI<br/>app.py"]
         UI -->|"GET /papers<br/>POST /ask"| API["FastAPI<br/>api/main.py"]
-        API --> Guard["api.ratelimit + api.usage<br/>per-IP limit · daily cap · SQLite log"]
+        API --> Guard["api.ratelimit + api.usage<br/>per-visitor limit · daily cap · SQLite log"]
         API --> Retriever["rag.retriever.Retriever<br/>FAISS + BM25 hybrid search"]
         Retriever --> Store
         API --> LLM["rag.llm<br/>Gemini"]
         Guard --> UsageDB[("data/usage.db")]
     end
 
-    Store -.loaded once at startup.-> Retriever
+    Store -.swapped in after each refresh.-> Retriever
 ```
 
 Two things fall out of this split immediately:
 
 - **The LLM is never in the ingestion path.** Building the corpus and the index costs
-  only arXiv bandwidth and a local embedding model, so the weekly refresh workflow needs
-  no API keys or secrets at all.
-- **The index is a static, versioned artifact.** `data/index/faiss.index` and
-  `data/index/chunks.json` are rebuilt by the offline pipeline and committed to the repo;
-  the API just loads them once at startup (`Retriever.__init__`) and serves requests
-  against an in-memory FAISS index. There is no database migration or live re-indexing to
-  reason about.
+  only arXiv bandwidth and a local embedding model.
+- **The corpus is disposable.** It is "the N most recent papers", rebuilt from scratch on
+  each refresh (`api/refresh.py`): a staging index is built, loaded, then swapped in while
+  requests keep being served. Nothing has to persist across restarts, so a fresh container
+  simply builds its index on startup, and no data is committed to the repo.
 
 ---
 
@@ -118,14 +118,13 @@ Two things fall out of this split immediately:
 |---|---|---|
 | 1. Fetch metadata | `ingest/arxiv_client.py` | Queries the arXiv Atom API for the `ARXIV_MAX_PAPERS` most recent papers matching `ARXIV_QUERY`, with retry/backoff. |
 | 2. Fetch + parse PDFs | `ingest/pdf_parser.py` | Downloads each PDF and extracts raw text with `pypdf`. Returns `None` on failure (scanned/malformed PDFs) — callers fall back to the abstract. |
-| 3. Persist the corpus | `ingest/fetch.py` | Merges into `data/papers.json`. Re-running is incremental: a paper already cached with `full_text` is **not** re-downloaded, so the weekly job only pays for genuinely new papers. The corpus is always "the N most recent matches" — papers that fall out of the top N are dropped. |
+| 3. Persist the corpus | `ingest/fetch.py` | Merges into `data/papers.json`. Re-running is incremental: a paper already cached with `full_text` is **not** re-downloaded, so a refresh only pays for genuinely new papers. The corpus is always "the N most recent matches" — papers that fall out of the top N are dropped. |
 | 4. Chunk | `rag/chunker.py` | Splits each paper into retrieval-sized chunks **without crossing section boundaries**. It detects numbered headings (`"3 Methodology"`, `"2.1 Related Work"`) via regex, drops the bibliography, merges undersized sections forward, then packs sentences into ~160-word chunks with 1-sentence overlap. Papers with too few/unclear headings fall back to chunking the whole body as one section. |
 | 5. Embed + index | `rag/index.py` | Encodes `"{title} \| {section}\n{text}"` for every chunk with a local `SentenceTransformer` (default `all-MiniLM-L6-v2`), normalizes to unit vectors, and builds a `faiss.IndexFlatIP` (exact inner-product search — cosine similarity, since vectors are unit length). Writes `data/index/faiss.index` (vectors) and `data/index/chunks.json` (text + metadata), aligned by row index. |
 
-**Automation:** [`.github/workflows/weekly-refresh.yml`](.github/workflows/weekly-refresh.yml)
-runs steps 1–5 every Monday (currently disabled), sanity-checks the rebuilt index with a smoke-test query, and
-commits the changed `data/` files straight to the branch — no secrets required, since
-nothing in this path calls an LLM.
+**Automation:** `api/refresh.py` runs steps 1–5 in a background thread of the API whenever
+the index is missing or older than `REFRESH_HOURS`. If arXiv is unreachable, the current
+corpus keeps being served and the refresh is retried an hour later.
 
 ```mermaid
 flowchart LR
@@ -167,7 +166,7 @@ sequenceDiagram
     User->>UI: types a question, clicks "Ask"
     UI->>API: POST /ask {question}
     API->>API: Pydantic validates length (3–MAX_QUESTION_CHARS)
-    API->>API: slowapi per-IP rate limit (ASK_RATE_LIMIT, default 5/hour)
+    API->>API: slowapi per-visitor rate limit (ASK_RATE_LIMIT, default 5/hour)
     API->>Usage: reserve_daily_slot(DAILY_CAP)
     alt daily cap reached
         Usage-->>API: None
@@ -194,7 +193,8 @@ These keep LLM usage predictable on Gemini's free tier:
 
 1. **Request validation** — `AskRequest.question` is capped at `MAX_QUESTION_CHARS`
    (Pydantic `Field`).
-2. **Per-IP rate limit** — `slowapi`, in-memory. Default `5/hour`.
+2. **Per-visitor rate limit** — `slowapi`, in-memory. Default `5/hour`. The UI forwards the
+   visitor's IP in `X-Visitor-IP`, since every request reaches the API from the UI server.
 3. **Global daily cap** — `api/usage.py`'s `reserve_daily_slot()` does an atomic
    `UPDATE daily_counts SET count = count + 1 WHERE day = ? AND count < ?` in SQLite, so
    it's race-free under concurrent requests without needing a lock. If the LLM call then
@@ -248,8 +248,8 @@ Everything lives under `data/`, all file-based — no external database:
 
 ```
 data/
-├── papers.json         # ingest.fetch output: arXiv metadata + parsed full text
-├── index/
+├── papers.json         # ingest.fetch output: arXiv metadata + parsed full text (not committed)
+├── index/              # built and refreshed by the API (not committed)
 │   ├── faiss.index      # rag.index output: FAISS IndexFlatIP, one vector per chunk
 │   └── chunks.json      # rag.index output: chunk text + metadata, row-aligned with faiss.index
 ├── eval/
@@ -290,7 +290,8 @@ arxiv-research-radar/
 │   └── answer.py                 # Retrieval + prompt construction + citation extraction (entry point)
 ├── api/
 │   ├── main.py                 # FastAPI app: /health, /papers, /ask
-│   ├── ratelimit.py             # Per-IP rate limiting (slowapi)
+│   ├── refresh.py               # Daily corpus refresh in a background thread, swapped in live
+│   ├── ratelimit.py             # Per-visitor rate limiting (slowapi)
 │   └── usage.py                  # SQLite daily cap + query log (entry point: `python -m api.usage`)
 ├── eval/
 │   ├── corpus.py               # Frozen benchmark corpus: fetch from arXiv, build its index (entry point)
@@ -301,9 +302,12 @@ arxiv-research-radar/
 │   └── calls.py                # Rate-limit-aware LLM calls and JSON parsing for the eval jobs
 ├── tests/                  # pytest suite (fake embeddings + fake LLM: no model download, no API key)
 ├── pyproject.toml          # ruff + pytest configuration
+├── Dockerfile              # Single image: API on localhost + Streamlit on $PORT (7860)
+├── start.sh                # Container entry point
+├── deploy/space-header.md  # Hugging Face Space settings, prepended to the README on deploy
 └── .github/workflows/
     ├── ci.yml                  # Lint + tests on every push to main and every pull request
-    └── weekly-refresh.yml      # Scheduled offline pipeline run (no secrets needed)
+    └── deploy-space.yml        # Pushes main to the Hugging Face Space
 ```
 
 Each entry point is independently runnable and documented in its own module docstring
@@ -315,7 +319,7 @@ isolation.
 
 Retrieval and answer quality are measured against a **frozen benchmark corpus**, kept
 separate from the live corpus so results stay comparable over time: the live corpus is
-"the 20 most recent papers" and changes every week.
+"the 20 most recent papers" and changes every day.
 
 The benchmark is every paper matching the default query submitted between 2026-08-01 and
 2026-09-30, stored with its parsed text in `data/eval/corpus.json.gz`. A closed date window
@@ -453,6 +457,26 @@ python -m eval.run                   # retrieval + answers (reuses stored answer
 python -m eval.run --retrieval-only  # no LLM calls, no API key needed
 ```
 
+## Deployment
+
+The demo runs as a single Docker container on a [Hugging Face Space](https://huggingface.co/docs/hub/spaces-sdks-docker):
+the API listens on localhost only and Streamlit is exposed on port 7860. The image contains
+no corpus; the API builds it on startup and refreshes it daily. The SQLite usage log and the
+in-memory rate-limit counters reset when the Space restarts.
+
+```bash
+docker build -t arxiv-radar .
+docker run -p 7860:7860 -e GEMINI_API_KEY=... arxiv-radar   # http://localhost:7860
+```
+
+One-time setup for continuous deployment from `main`:
+
+1. Create a Space with the **Docker** SDK, and add `GEMINI_API_KEY` as a Space secret.
+2. In the GitHub repository settings, add the secret `HF_TOKEN` (a Hugging Face token with
+   write access) and the variable `HF_SPACE` (e.g. `user/arxiv-research-radar`).
+3. Every push to `main` then runs [`deploy-space.yml`](.github/workflows/deploy-space.yml),
+   which pushes a snapshot of the app to the Space; the Space rebuilds the image.
+
 ## Configuration
 
 All tunables are environment variables, centralized in `config.py` and documented with
@@ -483,5 +507,5 @@ Work happens on feature branches merged into `main` through pull requests; CI
 | `ImportError: cannot import name 'genai' from 'google'` | The older `google-generativeai` package is installed instead of `google-genai`. `pip uninstall google-generativeai && pip install -r requirements.txt`. |
 | "The demo is misconfigured on the server side" | `GEMINI_API_KEY` is missing; the uvicorn log says so. Set it in `.env` and restart uvicorn. |
 | "The AI provider is busy right now" | Gemini free-tier rate limit. Wait a minute, or check your quota at [aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit). |
-| "You've reached the limit of 5 questions per hour" after a few local tries | The per-IP limit (`ASK_RATE_LIMIT`, default `5/hour`). Raise it in `.env` for local use, or restart uvicorn to reset the in-memory counters. |
-| `IndexNotBuiltError` on startup | `data/index/` is missing. Run `python -m rag.index`. |
+| "You've reached the limit of 5 questions per hour" after a few local tries | The per-visitor limit (`ASK_RATE_LIMIT`, default `5/hour`). Raise it in `.env` for local use, or restart uvicorn to reset the in-memory counters. |
+| "The paper index is being built" | The API is building its first index (about two minutes). If it persists, the uvicorn log shows why the refresh failed (usually arXiv being unreachable; it is retried hourly). |

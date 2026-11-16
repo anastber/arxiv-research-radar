@@ -2,27 +2,27 @@
 
 Cost/abuse controls on /ask, in the order they apply:
   1. request validation  (question length is capped)
-  2. per-IP rate limit   (slowapi, ASK_RATE_LIMIT, default 5/hour)
+  2. per-visitor rate limit (slowapi, ASK_RATE_LIMIT, default 5/hour)
   3. global daily cap    (SQLite counter, DAILY_CAP, default 200/day)
   4. retrieval threshold (nothing relevant -> the LLM is never called)
   5. max output tokens on the LLM call
 """
 import json
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 import config
-from api import usage
-from api.ratelimit import limiter, rate_limit_handler
+from api import refresh, usage
+from api.ratelimit import client_ip, limiter, rate_limit_handler
 from rag.answer import answer_question
 from rag.llm import AnswerError
-from rag.retriever import Retriever
+from rag.retriever import IndexNotBuiltError, Retriever
 
 logger = logging.getLogger("api")
 
@@ -37,14 +37,18 @@ ANSWER_ERRORS = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    usage._connect().close()                       # create tables early
-    app.state.retriever = Retriever()              # fail fast if the index isn't built
-    app.state.papers = [
-        {**{k: p[k] for k in ("arxiv_id", "title", "authors", "published", "category", "abs_url", "pdf_url")},
-         "has_full_text": bool(p.get("full_text"))}
-        for p in json.loads(config.PAPERS_PATH.read_text())
-    ]
+    usage._connect().close()  # create tables early
+    # Serve the index on disk right away if there is one; the refresh thread builds or renews it.
+    try:
+        app.state.retriever = Retriever()
+        app.state.papers = refresh.paper_list(json.loads(config.PAPERS_PATH.read_text()))
+    except (IndexNotBuiltError, FileNotFoundError):
+        app.state.retriever, app.state.papers = None, []
+    stop = threading.Event()
+    if config.REFRESH_HOURS > 0:
+        threading.Thread(target=refresh.loop, args=(app, stop), daemon=True).start()
     yield
+    stop.set()
 
 
 app = FastAPI(title="arXiv Research Radar", lifespan=lifespan)
@@ -71,7 +75,8 @@ class AskResponse(BaseModel):
 
 @app.get("/health")
 def health(request: Request):
-    return {"status": "ok", "papers": len(request.app.state.papers)}
+    status = "ok" if request.app.state.retriever is not None else "building_index"
+    return {"status": status, "papers": len(request.app.state.papers)}
 
 
 @app.get("/papers")
@@ -83,7 +88,11 @@ def papers(request: Request):
 @limiter.limit(config.ASK_RATE_LIMIT)
 def ask(request: Request, body: AskRequest):
     # Plain `def` on purpose: embedding + the LLM call block, so FastAPI runs this in a threadpool.
-    ip, question = get_remote_address(request), body.question.strip()
+    ip, question = client_ip(request), body.question.strip()
+    retriever = request.app.state.retriever
+    if retriever is None:  # fresh container: the first index build takes a minute or two
+        raise HTTPException(status_code=503,
+                            detail="The paper index is being built. Please try again in a minute.")
 
     day = usage.reserve_daily_slot(config.DAILY_CAP)
     if day is None:
@@ -94,7 +103,7 @@ def ask(request: Request, body: AskRequest):
         )
 
     try:
-        result = answer_question(question, request.app.state.retriever)
+        result = answer_question(question, retriever)
     except AnswerError as e:
         usage.release_daily_slot(day)  # no answer delivered, so don't burn a slot
         usage.log_query(ip, question, f"error:{e.kind}")

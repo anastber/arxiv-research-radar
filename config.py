@@ -42,6 +42,9 @@ MAX_ANSWER_TOKENS = int(os.getenv("MAX_ANSWER_TOKENS", "400"))  # hard cap on an
 GEMINI_THINKING_HEADROOM = int(os.getenv("GEMINI_THINKING_HEADROOM", "600"))
 GEMINI_THINKING_LEVEL = os.getenv("GEMINI_THINKING_LEVEL", "low")
 
+# --- Corpus refresh (inside the running API) ---
+REFRESH_HOURS = float(os.getenv("REFRESH_HOURS", "24"))  # re-fetch the latest papers this often; 0 = never
+
 # --- API: rate limiting, daily cap, usage log ---
 ASK_RATE_LIMIT = os.getenv("ASK_RATE_LIMIT", "5/hour")            # per IP, slowapi syntax
 DAILY_CAP = int(os.getenv("DAILY_CAP", "200"))                    # total /ask calls per UTC day
