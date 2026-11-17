@@ -2,16 +2,14 @@
 
 [![CI](https://github.com/anastber/arxiv-research-radar/actions/workflows/ci.yml/badge.svg)](https://github.com/anastber/arxiv-research-radar/actions/workflows/ci.yml)
 
-A small RAG (retrieval-augmented generation) app that answers questions about a rolling
-collection of recent arXiv papers, with per-answer citations back to the source papers.
+A RAG (retrieval-augmented generation) app that answers questions about the latest arXiv
+papers on a topic, with citations back to the source papers. The corpus refreshes itself
+daily, and every retrieval choice is backed by a benchmark.
 
-Ask "what defenses exist against corpus poisoning in RAG?" and get a short, grounded
-answer with `[1][2]`-style citations linking to the actual papers — never a hallucinated
-answer, because the LLM only ever sees retrieved chunks and is told to say so when
-nothing relevant was found.
-
-The first half of this README is about running it locally; the rest explains **how the system is
-put together**.
+Ask "what defenses exist against corpus poisoning in RAG?" and get a short answer with
+`[1][2]`-style citations linking to the papers. The model only sees retrieved passages and
+is told to say so when they don't cover the question; off-topic questions are turned away
+before the model is called.
 
 ![A cited answer drawing on two papers](docs/screenshots/answer.png)
 
@@ -19,415 +17,166 @@ put together**.
 |---|---|
 | ![Not-covered response](docs/screenshots/not-covered.png) | ![Rate limit message](docs/screenshots/rate-limit.png) |
 
+## Highlights
+
+- **Hybrid retrieval.** Dense embeddings (`all-MiniLM-L6-v2`, exact FAISS search) fused with
+  BM25 through Reciprocal Rank Fusion. On the benchmark, the share of questions whose
+  relevant paper reaches the model rises from 0.886 to 0.945.
+- **Measured, including what didn't work.** A frozen 437-paper benchmark with 139 questions
+  scores retrieval (Recall@k, MRR, nDCG) and answers (faithfulness, citation precision,
+  relevance, with a calibrated LLM judge). A newer embedding model and two rerankers were
+  tested and rejected on the numbers.
+- **Self-refreshing corpus.** The API re-fetches the 20 most recent papers every day and
+  swaps the new index in without downtime. No live data is stored in the repository.
+- **Cost controls for a free-tier LLM.** Per-visitor rate limit, global daily cap, a
+  relevance threshold that skips the LLM for off-topic questions, and an output token cap.
+- **Small and explicit.** No RAG framework: each stage is a short module you can run on its own.
+
 ---
 
-## Quickstart
+## How it works
 
-Requires Python 3.12+ and a free [Gemini API key](https://aistudio.google.com/apikey).
-The corpus is not stored in the repo: on first start the API fetches the latest papers
-from arXiv and builds its index (about two minutes).
-
-```bash
-git clone https://github.com/anastber/arxiv-research-radar.git
-cd arxiv-research-radar
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env        # then set GEMINI_API_KEY in .env
+```mermaid
+flowchart LR
+    subgraph Container["Docker container"]
+        direction TB
+        UI["Streamlit UI<br/>app.py · port 7860"] -->|"GET /papers<br/>POST /ask + X-Visitor-IP"| API["FastAPI<br/>api/main.py · localhost:8000"]
+        API --> Guard["api.ratelimit + api.usage<br/>rate limit · daily cap · SQLite log"]
+        API --> Retriever["rag.retriever<br/>FAISS + BM25, fused with RRF"]
+        API --> Answer["rag.answer + rag.llm<br/>grounded prompt · Gemini"]
+        Refresh["api.refresh<br/>background thread, daily"] -->|swaps in| Retriever
+    end
+    Browser["Browser"] --> UI
+    Arxiv[("arXiv API<br/>metadata + PDFs")] --> Refresh
+    Answer --> Gemini[("Gemini API")]
 ```
-
-Run the backend and the UI in two terminals (both with the venv activated):
-
-```bash
-uvicorn api.main:app --port 8000     # terminal 1, wait for "Application startup complete"
-streamlit run app.py                 # terminal 2, opens http://localhost:8501
-```
-
-The first start also downloads the embedding model (~90 MB) from Hugging Face.
-`curl http://localhost:8000/health` returns `{"status":"building_index",...}` until the
-index is ready, then `{"status":"ok","papers":20}`.
 
 ### Corpus refresh
 
-The API re-fetches the `ARXIV_MAX_PAPERS` most recent papers every `REFRESH_HOURS` (default
-24) and swaps the new index in without downtime; older papers are dropped. To index a
-different topic, change `ARXIV_QUERY` in `.env` and delete `data/index/`; the next start
-rebuilds it. The two stages can also be run by hand:
-
-```bash
-python -m ingest.fetch      # arXiv -> data/papers.json
-python -m rag.index         # papers -> data/index/
-```
-
-### Other entry points
-
-```bash
-python -m rag.answer "what is stale-document poisoning?"   # ask from the CLI, no API/UI
-python -m api.usage                                        # query log, daily counts, token usage
-```
-
----
-
-## System at a glance
-
-The app is two pipelines that share one data store: an **offline pipeline** that turns
-arXiv papers into a searchable vector index, and an **online pipeline** that serves
-questions against that index.
-
-```mermaid
-flowchart LR
-    subgraph Offline["Corpus refresh — daily, in a background thread of the API"]
-        direction TB
-        Arxiv[("arXiv API<br/>(Atom feed + PDFs)")] --> Fetch["ingest.fetch<br/>ingest.arxiv_client<br/>ingest.pdf_parser"]
-        Fetch --> Papers[("data/papers.json")]
-        Papers --> Chunk["rag.chunker<br/>section-aware splitting"]
-        Chunk --> Index["rag.index<br/>SentenceTransformer embeddings"]
-        Index --> Store[("data/index/faiss.index<br/>data/index/chunks.json")]
-    end
-
-    subgraph Online["Online pipeline — local API + UI"]
-        direction TB
-        Browser["Browser"] --> UI["Streamlit UI<br/>app.py"]
-        UI -->|"GET /papers<br/>POST /ask"| API["FastAPI<br/>api/main.py"]
-        API --> Guard["api.ratelimit + api.usage<br/>per-visitor limit · daily cap · SQLite log"]
-        API --> Retriever["rag.retriever.Retriever<br/>FAISS + BM25 hybrid search"]
-        Retriever --> Store
-        API --> LLM["rag.llm<br/>Gemini"]
-        Guard --> UsageDB[("data/usage.db")]
-    end
-
-    Store -.swapped in after each refresh.-> Retriever
-```
-
-Two things fall out of this split immediately:
-
-- **The LLM is never in the ingestion path.** Building the corpus and the index costs
-  only arXiv bandwidth and a local embedding model.
-- **The corpus is disposable.** It is "the N most recent papers", rebuilt from scratch on
-  each refresh (`api/refresh.py`): a staging index is built, loaded, then swapped in while
-  requests keep being served. Nothing has to persist across restarts, so a fresh container
-  simply builds its index on startup, and no data is committed to the repo.
-
----
-
-## Offline pipeline: papers → index
+`api/refresh.py` rebuilds the corpus in a background thread whenever the index is missing or
+older than `REFRESH_HOURS` (default 24):
 
 | Stage | Module | What it does |
 |---|---|---|
-| 1. Fetch metadata | `ingest/arxiv_client.py` | Queries the arXiv Atom API for the `ARXIV_MAX_PAPERS` most recent papers matching `ARXIV_QUERY`, with retry/backoff. |
-| 2. Fetch + parse PDFs | `ingest/pdf_parser.py` | Downloads each PDF and extracts raw text with `pypdf`. Returns `None` on failure (scanned/malformed PDFs) — callers fall back to the abstract. |
-| 3. Persist the corpus | `ingest/fetch.py` | Merges into `data/papers.json`. Re-running is incremental: a paper already cached with `full_text` is **not** re-downloaded, so a refresh only pays for genuinely new papers. The corpus is always "the N most recent matches" — papers that fall out of the top N are dropped. |
-| 4. Chunk | `rag/chunker.py` | Splits each paper into retrieval-sized chunks **without crossing section boundaries**. It detects numbered headings (`"3 Methodology"`, `"2.1 Related Work"`) via regex, drops the bibliography, merges undersized sections forward, then packs sentences into ~160-word chunks with 1-sentence overlap. Papers with too few/unclear headings fall back to chunking the whole body as one section. |
-| 5. Embed + index | `rag/index.py` | Encodes `"{title} \| {section}\n{text}"` for every chunk with a local `SentenceTransformer` (default `all-MiniLM-L6-v2`), normalizes to unit vectors, and builds a `faiss.IndexFlatIP` (exact inner-product search — cosine similarity, since vectors are unit length). Writes `data/index/faiss.index` (vectors) and `data/index/chunks.json` (text + metadata), aligned by row index. |
+| Fetch | `ingest/arxiv_client.py`, `ingest/fetch.py` | Lists the `ARXIV_MAX_PAPERS` most recent papers matching `ARXIV_QUERY`, with retry/backoff. Papers already downloaded keep their text, so only new PDFs are fetched. |
+| Parse | `ingest/pdf_parser.py` | Extracts PDF text with `pypdf`; falls back to the abstract for scanned or malformed PDFs. |
+| Chunk | `rag/chunker.py` | Section-aware chunks of ~160 words (see below). The abstract is its own chunk. |
+| Index | `rag/index.py` | Embeds `"{title} \| {section}\n{text}"` per chunk into a `faiss.IndexFlatIP` (unit vectors, so inner product is cosine similarity). |
+| Swap | `api/refresh.py` | Builds the index in a staging directory, loads it, then replaces the live retriever. Requests in flight keep the one they started with. |
 
-**Automation:** `api/refresh.py` runs steps 1–5 in a background thread of the API whenever
-the index is missing or older than `REFRESH_HOURS`. If arXiv is unreachable, the current
-corpus keeps being served and the refresh is retried an hour later.
+The corpus is disposable: it is always "the N most recent papers", rebuilt from scratch, so
+nothing needs to persist across restarts. A fresh container builds its index on startup
+(about two minutes) and `/ask` answers 503 until it is ready. If arXiv is unreachable, the
+current corpus keeps being served and the refresh is retried an hour later.
 
-```mermaid
-flowchart LR
-    A["python -m ingest.fetch"] --> B["python -m rag.index"] --> C["sanity-check query"] --> D["git commit + push data/"]
-```
+**Section-aware chunking.** Fixed-size chunks tend to separate a method from its
+justification. The chunker finds numbered section headings with a regex (and only trusts
+them if there are enough of them, covering most of the text), drops the bibliography,
+merges very short sections into the next one, and packs whole sentences into chunks with a
+one-sentence overlap that never crosses a section boundary.
 
-### Why chunking is section-aware
-
-Flat fixed-size chunking tends to split a method's description from its justification.
-`rag/chunker.py` instead:
-
-1. Finds numbered section headings with a regex, and requires at least `MIN_HEADINGS`
-   matches covering `MIN_COVERAGE` of the text before trusting the split — otherwise it
-   treats the whole paper as one section (avoids false positives from numbered lists,
-   equations, etc.).
-2. Cuts everything from the last `References`/`Bibliography` heading onward.
-3. Merges sections shorter than `MIN_SECTION_WORDS` into the next one, so a bare `"2
-   Related Work"` followed immediately by `"2.1 ..."` doesn't produce a near-empty chunk.
-4. Packs sentences (not raw text) into ~`CHUNK_WORDS`-word chunks with `CHUNK_OVERLAP`
-   sentences repeated at each boundary, so a claim near a chunk edge still has some
-   surrounding context.
-
-The abstract is always indexed separately as its own chunk (front matter/title/authors
-are otherwise dropped, since the abstract already summarizes them).
-
----
-
-## Online pipeline: question → cited answer
+### Answering a question
 
 ```mermaid
 sequenceDiagram
     actor User
-    participant UI as Streamlit (app.py)
+    participant UI as Streamlit
     participant API as FastAPI /ask
-    participant Usage as api.usage (SQLite)
-    participant Ret as rag.retriever.Retriever
-    participant LLM as rag.llm
+    participant Ret as Retriever
+    participant LLM as Gemini
 
-    User->>UI: types a question, clicks "Ask"
-    UI->>API: POST /ask {question}
-    API->>API: Pydantic validates length (3–MAX_QUESTION_CHARS)
-    API->>API: slowapi per-visitor rate limit (ASK_RATE_LIMIT, default 5/hour)
-    API->>Usage: reserve_daily_slot(DAILY_CAP)
-    alt daily cap reached
-        Usage-->>API: None
-        API-->>UI: 429 {"error": "daily_cap"}
-        UI-->>User: "demo limit reached" message
-    else slot reserved
-        API->>Ret: search(question)
-        Ret-->>API: top-k chunks (hybrid), or [] if best score < MIN_SCORE
-        alt nothing relevant found
-            API-->>UI: fixed "not covered" answer — LLM never called
-        else relevant chunks found
-            API->>LLM: complete(system_prompt, sources + question)
-            LLM-->>API: answer text, token usage, truncated?
-            API->>Usage: log_query(...) — tokens, status, ip_hash
-            API-->>UI: {answer, cited_papers[], truncated}
-        end
+    User->>UI: question
+    UI->>API: POST /ask (X-Visitor-IP)
+    API->>API: validate length · per-visitor rate limit · daily cap
+    API->>Ret: search(question)
+    alt best chunk below MIN_SCORE
+        Ret-->>API: []
+        API-->>UI: fixed "not covered" answer, LLM never called
+    else relevant chunks
+        Ret-->>API: top 6 chunks, at most 2 per paper
+        API->>LLM: sources + question
+        LLM-->>API: answer with [n] citations
+        API-->>UI: answer + cited papers
     end
-    UI-->>User: rendered markdown answer + source links
+    UI-->>User: answer and source links
 ```
 
-### Request-time cost/abuse controls, in the order they apply
+**Retrieval.** The question is embedded and matched against the FAISS index, and scored
+with BM25 over the same chunk texts. The two rankings are merged with Reciprocal Rank
+Fusion, so a passage sharing exact terms with the question (a method name, an acronym)
+can surface even when its embedding is not the closest. At most 2 chunks per paper are
+kept, so answers draw on several papers.
 
-These keep LLM usage predictable on Gemini's free tier:
+**Grounding and citations.** `rag/answer.py` groups the chunks by paper inside
+`<source id="N">` tags. The system prompt restricts the model to those sources, asks it to
+say when they are insufficient, to cite `[N]` after each claim, and to ignore instructions
+found inside the papers (the prompt-injection defense). Citations are parsed back out of the
+answer, so the returned `cited_papers` are the ones the model actually cited.
 
-1. **Request validation** — `AskRequest.question` is capped at `MAX_QUESTION_CHARS`
-   (Pydantic `Field`).
-2. **Per-visitor rate limit** — `slowapi`, in-memory. Default `5/hour`. The UI forwards the
-   visitor's IP in `X-Visitor-IP`, since every request reaches the API from the UI server.
-3. **Global daily cap** — `api/usage.py`'s `reserve_daily_slot()` does an atomic
-   `UPDATE daily_counts SET count = count + 1 WHERE day = ? AND count < ?` in SQLite, so
-   it's race-free under concurrent requests without needing a lock. If the LLM call then
-   fails, `release_daily_slot()` gives the slot back — a failed request shouldn't burn
-   quota.
-4. **Retrieval threshold** — `Retriever.search()` returns `[]` when the question's best
-   chunk scores below `MIN_SCORE`; `answer_question()` short-circuits to a canned "not
-   covered" response **without calling the LLM at all**, so clearly off-topic questions
-   never reach the rate-limited API (about half of the benchmark's near-domain ones too).
-5. **Output token cap** — `MAX_ANSWER_TOKENS` bounds the LLM call itself, so even an
-   answered question has a predictable worst-case cost.
+**Cost and abuse controls**, in the order they apply:
 
-### LLM error handling
+1. **Validation**: questions are capped at `MAX_QUESTION_CHARS`.
+2. **Per-visitor rate limit** (`ASK_RATE_LIMIT`, default `5/hour`, in memory). The UI
+   forwards the visitor's IP in `X-Visitor-IP`; the API trusts it because it only listens on
+   localhost, behind the UI.
+3. **Global daily cap** (`DAILY_CAP`, default 200): an atomic SQLite counter. A failed LLM
+   call gives its slot back.
+4. **Relevance threshold** (`MIN_SCORE`): if the question's best chunk is below it, the
+   answer is a fixed "not covered" message and the LLM is not called.
+5. **Output cap** (`MAX_ANSWER_TOKENS`) on the LLM call.
 
-`rag/llm.py` exposes one function, `complete(system, user) -> Completion`, backed by the
-Gemini API (`google-genai`). Every SDK exception it can raise is translated into an
-`AnswerError` carrying a `kind` (`config` / `rate_limit` / `unavailable` / `bad_request`).
-`api/main.py` maps `kind` to an HTTP status and a user-safe message via `ANSWER_ERRORS` —
-the API layer never needs to know the SDK's exception types, and internal details (stack
-traces, raw SDK errors) never reach the client, only the server log.
-
-```mermaid
-flowchart TB
-    complete["rag.llm.complete(system, user)"] --> sdk["google-genai SDK call"]
-    sdk --> norm["Completion(text, input_tokens, output_tokens, truncated)"]
-    sdk -.SDK error.-> err["AnswerError(kind=...)"]
-    err --> mapped["api.main.ANSWER_ERRORS[kind] → HTTP status + safe message"]
-```
-
-### Grounding and citations
-
-`rag/answer.py` builds the prompt so the model is structurally limited to the retrieved
-text:
-
-- Retrieved chunks are grouped by paper and wrapped in `<source id="N" title="...">...`
-  tags; the question is wrapped in `<question>`.
-- The system prompt instructs the model to answer **only** from the sources, say so
-  plainly when they're insufficient, cite with `[N]` after each claim, and explicitly
-  ignore any instructions embedded in the source text (the papers are untrusted
-  documents — this is the app's prompt-injection defense).
-- `extract_citations()` parses `[N]`/`[N, M]` citation markers back out of the answer
-  text with a regex and resolves them to the actual paper metadata, in first-cited order
-  — so `cited_papers` in the API response is derived from what the model actually cited,
-  not just what was retrieved.
+**LLM errors.** `rag/llm.py` turns every SDK error into an `AnswerError` with a `kind`
+(`config`, `rate_limit`, `unavailable`, `bad_request`), which the API maps to an HTTP status
+and a user-safe message. Internal details only reach the server log.
 
 ---
-
-## Storage layout
-
-Everything lives under `data/`, all file-based — no external database:
-
-```
-data/
-├── papers.json         # ingest.fetch output: arXiv metadata + parsed full text (not committed)
-├── index/              # built and refreshed by the API (not committed)
-│   ├── faiss.index      # rag.index output: FAISS IndexFlatIP, one vector per chunk
-│   └── chunks.json      # rag.index output: chunk text + metadata, row-aligned with faiss.index
-├── eval/
-│   ├── corpus.json.gz   # frozen benchmark corpus (see Evaluation below)
-│   ├── questions.jsonl  # golden question set: LLM-drafted, reviewed by hand
-│   ├── answer_grades.jsonl  # hand grades of a sample of answers, used to calibrate the judge
-│   ├── answers.jsonl    # answers + judge verdicts of the last `eval.answers run` (not committed)
-│   ├── results/         # JSON reports from `python -m eval.run`
-│   └── index/           # benchmark index, built locally by `python -m eval.corpus index` (not committed)
-└── usage.db             # api.usage: SQLite — daily_counts + queries tables (created at API startup)
-```
-
-`chunks.json[i]` corresponds to row `i` of `faiss.index` by construction — both are
-written together in `rag/index.py` and never modified independently.
-
-`usage.db` is the only piece of *runtime* state; everything else is read-only once the
-API has started (`Retriever` loads the FAISS index and the embedding model once, in
-`lifespan()`, and keeps them in memory for the process lifetime).
-
----
-
-## Component map
-
-```
-arxiv-research-radar/
-├── app.py                  # Streamlit UI: renders the paper sidebar, question form, answer + citations
-├── config.py                # Single source of config, all overridable via env vars (see .env.example)
-├── ingest/
-│   ├── arxiv_client.py       # arXiv Atom API client (search, parse entries)
-│   ├── pdf_parser.py         # PDF download + text extraction (pypdf)
-│   └── fetch.py               # Orchestrates the two above -> data/papers.json (entry point)
-├── rag/
-│   ├── chunker.py             # Section-aware paper -> chunk splitting
-│   ├── index.py                # chunks -> embeddings -> FAISS index (entry point)
-│   ├── retriever.py            # Loads the index; hybrid (dense + BM25) search, per-paper cap, optional reranker
-│   ├── bm25.py                 # BM25 over chunk texts + Reciprocal Rank Fusion
-│   ├── llm.py                   # complete() over the Gemini API, with SDK errors normalized to AnswerError
-│   └── answer.py                 # Retrieval + prompt construction + citation extraction (entry point)
-├── api/
-│   ├── main.py                 # FastAPI app: /health, /papers, /ask
-│   ├── refresh.py               # Daily corpus refresh in a background thread, swapped in live
-│   ├── ratelimit.py             # Per-visitor rate limiting (slowapi)
-│   └── usage.py                  # SQLite daily cap + query log (entry point: `python -m api.usage`)
-├── eval/
-│   ├── corpus.py               # Frozen benchmark corpus: fetch from arXiv, build its index (entry point)
-│   ├── questions.py            # Golden question set: draft with Gemini, review interactively (entry point)
-│   ├── retrieval.py            # Retrieval metrics on the question set: Recall@k, MRR, nDCG, rejection (entry point)
-│   ├── answers.py              # Answer metrics graded by an LLM judge, calibrated on graded samples (entry point)
-│   ├── run.py                  # Full benchmark: retrieval + answer metrics, tables and a JSON report (entry point)
-│   └── calls.py                # Rate-limit-aware LLM calls and JSON parsing for the eval jobs
-├── tests/                  # pytest suite (fake embeddings + fake LLM: no model download, no API key)
-├── pyproject.toml          # ruff + pytest configuration
-├── Dockerfile              # Single image: API on localhost + Streamlit on $PORT (7860)
-├── start.sh                # Container entry point
-├── deploy/space-header.md  # Hugging Face Space settings, prepended to the README on deploy
-└── .github/workflows/
-    ├── ci.yml                  # Lint + tests on every push to main and every pull request
-    └── deploy-space.yml        # Pushes main to the Hugging Face Space
-```
-
-Each entry point is independently runnable and documented in its own module docstring
-(`python -m ingest.fetch`, `python -m rag.index`, `python -m rag.answer "..."`,
-`python -m api.usage`), which is the fastest way to exercise one stage of the pipeline in
-isolation.
 
 ## Evaluation
 
-Retrieval and answer quality are measured against a **frozen benchmark corpus**, kept
-separate from the live corpus so results stay comparable over time: the live corpus is
-"the 20 most recent papers" and changes every day.
+Quality is measured on a **frozen benchmark**, separate from the live corpus (which changes
+daily), so results stay comparable over time.
 
-The benchmark is every paper matching the default query submitted between 2026-08-01 and
-2026-09-30, stored with its parsed text in `data/eval/corpus.json.gz`. A closed date window
-means the paper list can always be re-derived from arXiv.
+- **Corpus**: the 437 papers matching the default query submitted between 2026-08-01 and
+  2026-09-30, with their parsed text, in `data/eval/corpus.json.gz`.
+- **Questions**: 139 accepted questions in `data/eval/questions.jsonl`, drafted by Gemini
+  from passages of the corpus: 90 answered by one paper, 20 needing two papers, and 29
+  off-topic (12 general, 17 near-domain such as vision or speech). Ground truth is the set
+  of relevant papers, so the questions stay valid when chunking changes. The drafting prompt
+  forbids naming the system a paper introduces, which would make retrieval a keyword match.
+- **Review**: 37 questions were reviewed by hand, the 17 near-domain off-topic questions by
+  Claude Opus 5.5; the rest were accepted as drafted.
 
-```bash
-python -m eval.corpus index   # build data/eval/index/<EMBED_MODEL>/ from the committed corpus (~5 min on CPU)
-python -m eval.corpus fetch   # maintainers only: re-download the corpus from arXiv (~30 min)
-```
+### Retrieval
 
-The **golden question set** (`data/eval/questions.jsonl`) is drafted by Gemini from passages
-of the benchmark corpus, then reviewed by hand. It holds three kinds of questions:
-
-| Kind | Drafted from | Expected behavior |
-|---|---|---|
-| `single` | one passage of one paper | retrieve that paper |
-| `multi` | two related passages from different papers (cosine 0.55–0.9) | retrieve both papers |
-| `off_topic` | nothing in the corpus | decline to answer |
-
-Ground truth is the list of relevant papers (`arxiv_ids`) rather than chunk ids, so the
-question set stays valid when parsing or chunking changes. The source passages are kept as
-`evidence`, along with a reference answer. Questions never name the system a paper
-introduces, so that retrieval cannot succeed on a single keyword match.
-
-```bash
-python -m eval.questions generate   # draft questions (needs GEMINI_API_KEY and the benchmark index)
-python -m eval.questions review     # accept, edit or reject each pending question
-```
-
-Only `accepted` questions are used for evaluation. `generate` is resumable, and rerunning
-it after a review replaces rejected questions with new drafts from unused passages.
-
-**Retrieval metrics** are scored at the paper level, in two views:
-
-- *Ranking*: papers ordered by their best-matching chunk, with no score threshold.
-  Recall@k, MRR and nDCG@10 measure ranking quality independently of `MIN_SCORE`.
-- *Production*: `Retriever.search()` with the live settings, i.e. the exact context sent to
-  the LLM. `context_recall` is the share of relevant papers in that context, and `rejected`
-  the share of questions for which nothing cleared `MIN_SCORE`.
-
-```bash
-python -m eval.retrieval   # needs the benchmark index
-```
-
-Baseline (`all-MiniLM-L6-v2`, exact search, `TOP_K=6`, `MAX_CHUNKS_PER_PAPER=2`, `MIN_SCORE=0.3`):
-
-| Questions | n | Recall@1 | Recall@5 | Recall@10 | MRR | nDCG@10 | Context recall | Rejected |
-|---|---|---|---|---|---|---|---|---|
-| single-paper | 90 | 0.767 | 0.911 | 0.944 | 0.833 | 0.860 | 0.911 | 0.000 |
-| multi-paper | 20 | 0.400 | 0.800 | 0.850 | 0.850 | 0.786 | 0.775 | 0.000 |
-| off-topic | 12 | – | – | – | – | – | – | 0.417 |
-
-Recall@1 for multi-paper questions is capped at 0.5, since each has two relevant papers.
-Only 5 of the 12 off-topic questions are rejected: their best chunks score 0.23–0.48, while
-every in-scope question scores at least 0.50, so `MIN_SCORE=0.3` is too permissive.
-
-**Retrieval ablations.** Each change was benchmarked against the dense baseline on the 110
-in-scope questions (`python -m eval.run --retrieval-only`):
+Scored at the paper level on the 110 in-scope questions. *Context recall* is the share of
+relevant papers present in the context actually sent to the model; the other metrics rank
+papers by their best chunk, without threshold.
 
 | Configuration | Recall@1 | Recall@5 | MRR | nDCG@10 | Context recall |
 |---|---|---|---|---|---|
 | MiniLM, dense (baseline) | 0.700 | 0.891 | 0.836 | 0.847 | 0.886 |
 | `bge-small-en-v1.5`, dense | 0.677 | 0.836 | 0.792 | 0.807 | 0.841 |
-| **MiniLM, hybrid (BM25 + RRF)** | 0.791 | **0.945** | 0.913 | 0.920 | **0.945** |
+| **MiniLM, hybrid (BM25 + RRF)**, current | 0.791 | **0.945** | 0.913 | 0.920 | **0.945** |
 | `bge-small-en-v1.5`, hybrid | 0.777 | 0.914 | 0.893 | 0.901 | 0.927 |
 | MiniLM, hybrid + `ms-marco-MiniLM-L-6-v2` reranker | 0.800 | 0.923 | 0.898 | 0.903 | 0.918 |
 | MiniLM, hybrid + `bge-reranker-base` reranker | **0.809** | 0.932 | **0.918** | **0.923** | 0.927 |
 
-- **Hybrid search** is the clear gain and is now the default (`RETRIEVAL_MODE=hybrid`): BM25
-  recovers passages that share exact terms with the question. The questions were drafted from
-  passages, which favors lexical matching somewhat, so the gain on real queries may be smaller.
-- **`bge-small`** does not beat MiniLM here, with or without its query instruction. Multi-paper
-  pairs were selected with MiniLM similarities, but MiniLM also wins on single-paper questions.
-- **Reranking** slightly improves the top of the ranking but lowers context recall, the share
-  of relevant papers the LLM actually sees, and `bge-reranker-base` is slow on CPU. It stays
-  off by default (`RERANK_MODEL` enables it).
-- **Threshold.** 18 near-domain off-topic questions (vision, reinforcement learning, speech,
-  diffusion models; reviewed by Claude Opus 5.5, 1 rejected) were added to the 12 existing ones.
-  Their best chunks score up to 0.57, overlapping the lowest in-scope score (0.50), so no
-  threshold separates them perfectly. `MIN_SCORE=0.45` rejects 15 of 29 off-topic questions
-  (5 at 0.3) and no in-scope question, keeping a margin for real queries, which match passages
-  less closely than drafted questions. Off-topic questions that clear the threshold are still
-  declined by the answer model.
+- **Hybrid search** is the clear gain. The questions were drafted from passages, which
+  favors exact-term matching somewhat, so the gain on real queries may be smaller.
+- **`bge-small`** does not beat MiniLM, with or without its query instruction.
+- **Reranking** slightly improves the top of the ranking but lowers context recall, and
+  `bge-reranker-base` is slow on CPU. It stays off (`RERANK_MODEL` enables it).
+- **Threshold.** Near-domain off-topic questions score up to 0.57, above the lowest
+  in-scope question (0.50), so no threshold separates them perfectly. `MIN_SCORE=0.45`
+  rejects 15 of 29 off-topic questions (5 with the former 0.3) and no in-scope question,
+  keeping a margin for real queries.
 
-**Answer metrics** run the full pipeline (retrieval, then Gemini) on every accepted question.
-An LLM judge splits each answer into claims and marks which retrieved sources support each one:
+### Answers
 
-| Metric | Definition |
-|---|---|
-| Faithfulness | share of claims supported by at least one retrieved source |
-| Citation precision | share of citations pointing to a source that supports the claim |
-| Relevance | how directly the answer addresses the question (judge score 1–5, rescaled to 0–1) |
-| Declined | share of answers saying the sources don't cover the question (should be 1 for off-topic only) |
-
-```bash
-python -m eval.answers run        # answer + judge every question (needs GEMINI_API_KEY; resumable)
-python -m eval.answers report     # metrics table from the last run, no LLM calls
-python -m eval.answers grade      # hand-grade a fixed sample of 20 answers
-python -m eval.answers calibrate  # re-judge the hand-graded answers and report agreement
-```
-
-The judge defaults to the answer model (`EVAL_JUDGE_MODEL` overrides it), which can bias it in
-its own favor. Its verdicts are therefore checked against hand grades: `answer_grades.jsonl`
-stores each graded answer with its sources, so calibration can be rerun whenever the judge
-prompt or model changes. A stored answer is reused by `run` only if the retrieval and model
-settings it was produced with are unchanged.
-
-Baseline (same retrieval settings as above, `gemini-3.5-flash-lite` as both answer model and judge):
+The full pipeline answers every question, and an LLM judge splits each answer into claims
+and marks which sources support each one. Measured on the dense baseline
+(`MIN_SCORE=0.3`, 12 off-topic questions), with `gemini-3.5-flash-lite` as both answer model
+and judge:
 
 | Questions | n | Faithfulness | Citation precision | Relevance | Declined |
 |---|---|---|---|---|---|
@@ -435,77 +184,149 @@ Baseline (same retrieval settings as above, `gemini-3.5-flash-lite` as both answ
 | multi-paper | 20 | 0.989 | 1.000 | 0.900 | 0.050 |
 | off-topic | 12 | – | – | – | 1.000 |
 
-- All off-topic questions are declined, including the 7 that clear `MIN_SCORE`: the answer
-  prompt's grounding rule catches what the retrieval threshold lets through.
-- 14 of the 15 declined in-scope answers had the right paper in context but not the passage
-  holding the answer (at most 2 chunks per paper are kept), so declines point to retrieval,
-  not generation.
-- The judge is lenient. The calibration sample (20 answers) was graded by Claude Opus 5.5, not
-  by a human; each grade records its `grader`. The judge agrees on 18/20 faithfulness verdicts
-  and 17/19 citation verdicts, but every disagreement is the judge missing an overstated claim
-  (e.g. "rises significantly" where the source reports a non-significant change). Faithfulness
-  is therefore overestimated: 2 of the 20 graded answers contain an unsupported claim. Relevance
-  scores differ by 0.35 points on average (1–5 scale).
+- **All off-topic questions are declined**, including the 7 that cleared the threshold: the
+  grounding rule catches what retrieval lets through.
+- **Declines come from retrieval.** 14 of the 15 declined in-scope answers had the right
+  paper in context but not the passage holding the answer.
+- **The judge is lenient.** On a 20-answer calibration sample graded by Claude Opus 5.5 (not
+  by a human), the judge agrees on 18/20 faithfulness verdicts and 17/19 citation verdicts,
+  but every disagreement is the judge missing an overstated claim. Real faithfulness is
+  closer to 0.9 than 1.0.
 
-**Full benchmark.** `python -m eval.run` runs both evaluations with a single retriever and
-prints both tables. It writes a JSON report to `data/eval/results/` that records the git commit
-(and whether the working tree was dirty), the settings, a hash of the question set, and
-per-question metrics. Numbers quoted in this README come from a committed report.
+### Running the benchmark
 
 ```bash
-python -m eval.run                   # retrieval + answers (reuses stored answers when settings match)
-python -m eval.run --retrieval-only  # no LLM calls, no API key needed
+python -m eval.corpus index          # build the benchmark index (~5 min on CPU)
+python -m eval.run --retrieval-only  # retrieval metrics, no API key needed
+python -m eval.run                   # retrieval + answer metrics (needs GEMINI_API_KEY)
 ```
 
-## Deployment
+`eval.run` prints both tables and writes a JSON report to `data/eval/results/` with the git
+commit, the settings, a hash of the question set and per-question metrics; the numbers above
+come from the committed reports. The building blocks have their own entry points:
+`eval.questions` (draft and review questions), `eval.retrieval`, and `eval.answers`
+(`run`, `report`, `grade`, `calibrate` for the judge).
 
-The demo runs as a single Docker container on a [Hugging Face Space](https://huggingface.co/docs/hub/spaces-sdks-docker):
-the API listens on localhost only and Streamlit is exposed on port 7860. The image contains
-no corpus; the API builds it on startup and refreshes it daily. The SQLite usage log and the
-in-memory rate-limit counters reset when the Space restarts.
+---
+
+## Running it
+
+### Locally
+
+Requires Python 3.12+ and a free [Gemini API key](https://aistudio.google.com/apikey).
+
+```bash
+git clone https://github.com/anastber/arxiv-research-radar.git
+cd arxiv-research-radar
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env                 # then set GEMINI_API_KEY
+
+uvicorn api.main:app --port 8000     # terminal 1
+streamlit run app.py                 # terminal 2, opens http://localhost:8501
+```
+
+On first start the API downloads the embedding model (~90 MB), fetches the latest papers
+and builds its index, which takes about two minutes. `curl localhost:8000/health` reports
+`building_index` until then, and `ok` after.
+
+Other entry points:
+
+```bash
+python -m rag.answer "what is stale-document poisoning?"   # ask from the CLI
+python -m api.usage                                        # query log, daily counts, token usage
+python -m ingest.fetch && python -m rag.index              # rebuild the corpus by hand
+```
+
+### With Docker
 
 ```bash
 docker build -t arxiv-radar .
 docker run -p 7860:7860 -e GEMINI_API_KEY=... arxiv-radar   # http://localhost:7860
 ```
 
-One-time setup for continuous deployment from `main`:
+One container runs both processes (`start.sh`): the API on localhost only, Streamlit on port
+7860. The image holds no corpus; the API builds it on startup.
 
-1. Create a Space with the **Docker** SDK, and add `GEMINI_API_KEY` as a Space secret.
-2. In the GitHub repository settings, add the secret `HF_TOKEN` (a Hugging Face token with
-   write access) and the variable `HF_SPACE` (e.g. `user/arxiv-research-radar`).
-3. Every push to `main` then runs [`deploy-space.yml`](.github/workflows/deploy-space.yml),
-   which pushes a snapshot of the app to the Space; the Space rebuilds the image.
+### Deployment
+
+The demo targets a [Hugging Face Space](https://huggingface.co/docs/hub/spaces-sdks-docker)
+with the Docker SDK. On every push to `main`,
+[`deploy-space.yml`](.github/workflows/deploy-space.yml) pushes a snapshot of the app to the
+Space, which rebuilds the image. One-time setup:
+
+1. Create a Docker Space and add `GEMINI_API_KEY` as a Space secret.
+2. In the GitHub repository settings, add the secret `HF_TOKEN` (a write token) and the
+   variable `HF_SPACE` (e.g. `user/arxiv-research-radar`).
+
+The usage log and the rate-limit counters live in the container and reset when the Space
+restarts.
+
+---
 
 ## Configuration
 
-All tunables are environment variables, centralized in `config.py` and documented with
-inline comments there and in [`.env.example`](.env.example) — covering the arXiv query,
-chunking/embedding, retrieval (`TOP_K`, `MIN_SCORE`), the Gemini model, and the abuse
-controls (`ASK_RATE_LIMIT`, `DAILY_CAP`).
+All settings are environment variables read by `config.py`; [`.env.example`](.env.example)
+lists them with their defaults. The main ones:
 
-`.env` is read once when a process starts, so restart uvicorn after editing it
-(`--reload` only watches Python files).
+| Variable | Default | Purpose |
+|---|---|---|
+| `GEMINI_API_KEY` | — | Required for answers |
+| `ARXIV_QUERY` | `all:"retrieval augmented generation"` | Topic of the live corpus |
+| `ARXIV_MAX_PAPERS` | `20` | Size of the live corpus |
+| `REFRESH_HOURS` | `24` | Corpus refresh interval (`0` disables it) |
+| `RETRIEVAL_MODE` | `hybrid` | `hybrid` or `dense` |
+| `MIN_SCORE` | `0.45` | Relevance threshold below which the LLM is skipped |
+| `RERANK_MODEL` | empty | Optional cross-encoder reranker |
+| `ASK_RATE_LIMIT`, `DAILY_CAP` | `5/hour`, `200` | Abuse and cost controls |
+
+`.env` is read when a process starts: restart uvicorn after editing it.
+
+## Project layout
+
+```
+├── app.py               Streamlit UI
+├── config.py            All settings, overridable by environment variables
+├── api/
+│   ├── main.py          FastAPI app: /health, /papers, /ask
+│   ├── refresh.py       Daily corpus refresh, swapped in live
+│   ├── ratelimit.py     Per-visitor rate limiting (slowapi)
+│   └── usage.py         Daily cap and query log (SQLite)
+├── ingest/              arXiv client, PDF parsing, corpus fetch
+├── rag/
+│   ├── chunker.py       Section-aware chunking
+│   ├── index.py         Embeddings and FAISS index
+│   ├── bm25.py          BM25 and Reciprocal Rank Fusion
+│   ├── retriever.py     Hybrid search, per-paper cap, optional reranker
+│   ├── llm.py           Gemini calls, errors normalized to AnswerError
+│   └── answer.py        Prompt, grounding and citation extraction
+├── eval/                Benchmark: corpus, questions, retrieval and answer metrics
+├── data/eval/           Benchmark corpus, questions, grades and reports (committed)
+├── tests/               pytest suite (fake embeddings and LLM: no network, no API key)
+├── Dockerfile, start.sh Container image and entry point
+├── deploy/              Hugging Face Space settings
+└── .github/workflows/   CI (lint + tests) and deployment to the Space
+```
 
 ## Development
 
 ```bash
 pip install -r requirements-dev.txt
-pytest            # unit + API tests, a few seconds, no network or API key needed
-ruff check .      # lint
+pytest            # a few seconds, no network or API key needed
+ruff check .
 ```
 
-Work happens on feature branches merged into `main` through pull requests; CI
-([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint and tests on each one.
+Work happens on feature branches merged into `main` through pull requests; CI runs lint
+and tests on each one.
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
-| UI says "Couldn't load the paper list (backend unreachable)" | The API isn't running, or crashed on startup. Check the uvicorn terminal for a traceback; it only serves requests after "Application startup complete". |
-| `ModuleNotFoundError: No module named 'google'` (or any package) | `pip` installed into a different Python than the one running uvicorn, typically Anaconda's `base` env alongside the venv. Run `conda deactivate`, activate `.venv`, check `which python` points into `.venv`, then reinstall. |
-| `ImportError: cannot import name 'genai' from 'google'` | The older `google-generativeai` package is installed instead of `google-genai`. `pip uninstall google-generativeai && pip install -r requirements.txt`. |
-| "The demo is misconfigured on the server side" | `GEMINI_API_KEY` is missing; the uvicorn log says so. Set it in `.env` and restart uvicorn. |
+| "Couldn't load the paper list (backend unreachable)" | The API isn't running or crashed on startup; check the uvicorn output. |
+| "The paper index is being built" | The first index build takes about two minutes. If it persists, the uvicorn log says why the refresh failed (usually arXiv being unreachable; it is retried hourly). |
+| "The demo is misconfigured on the server side" | `GEMINI_API_KEY` is missing. Set it in `.env` and restart uvicorn. |
 | "The AI provider is busy right now" | Gemini free-tier rate limit. Wait a minute, or check your quota at [aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit). |
-| "You've reached the limit of 5 questions per hour" after a few local tries | The per-visitor limit (`ASK_RATE_LIMIT`, default `5/hour`). Raise it in `.env` for local use, or restart uvicorn to reset the in-memory counters. |
-| "The paper index is being built" | The API is building its first index (about two minutes). If it persists, the uvicorn log shows why the refresh failed (usually arXiv being unreachable; it is retried hourly). |
+| "You've reached the limit of 5 questions per hour" locally | Raise `ASK_RATE_LIMIT` in `.env`, or restart uvicorn to reset the counters. |
+| `ModuleNotFoundError` for an installed package | `pip` installed into another Python (often Anaconda's `base`). Run `conda deactivate`, activate `.venv`, and reinstall. |
+| `ImportError: cannot import name 'genai' from 'google'` | The old `google-generativeai` package is installed. `pip uninstall google-generativeai && pip install -r requirements.txt`. |
